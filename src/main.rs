@@ -6057,16 +6057,22 @@ mod solver {
             pub fn rot_cmd(
                 &self,
                 cmd_base: &[Vec<Vec<char>>],
-                mut dir0: usize,
-                mut dir1: usize,
+                dir0: usize,
+                dir1: usize,
             ) -> Vec<Vec<char>> {
                 let mut cmd = vec![vec![]; self.len()];
                 for i in 0..self.len() {
-                    let d0 = dir0 & 3;
-                    let d1 = dir1 & 3;
+                    let d0 = if i == 0 {
+                        (dir0 >> (2 * i)) & 3
+                    } else {
+                        let pd0 = (dir0 >> (2 * (i - 1))) & 3;
+                        let nd0 = (dir0 >> (2 * i)) & 3;
+                        let del0 = (nd0 + 4 - pd0) % 4;
+                        let pd1 = (dir1 >> (2 * (i - 1))) & 3;
+                        (pd1 + del0) % 4
+                    };
+                    let d1 = (dir1 >> (2 * i)) & 3;
                     cmd[i] = cmd_base[d0][d1].clone();
-                    dir0 >>= 2;
-                    dir1 >>= 2;
                 }
                 cmd
             }
@@ -6236,6 +6242,12 @@ mod solver {
             dyx: (i32, i32),
         ) -> Vec<String> {
             let mut cmd = vec![];
+            let mut add = |cy: usize, cx: usize, c: char| {
+                if cmd.len() <= cy {
+                    cmd.push(vec!['.'; 2 * used]);
+                }
+                cmd[cy][cx] = c;
+            };
             let mut arm_idx0 = 1;
             let mut arm_idx1 = used + 1;
             for (arm_shape, (&dir0, dir_upd)) in
@@ -6244,23 +6256,24 @@ mod solver {
                 // one arm
                 let mut dir = dir0;
                 // repeat
+                let mut cmd_y = 0;
                 for &dir1 in dir_upd.iter() {
                     let v_cs = arm_shape.rot_cmd(&self.cmd_base, dir, dir1);
+                    let mut cmd_delta = 0;
+                    let mut cmd_y_of_v = cmd_y;
                     for (v, cs) in v_cs.into_iter().enumerate() {
                         let cmd_x = arm_idx0 + v;
-                        for (lv, &c) in cs.iter().enumerate() {
-                            if cmd.len() <= lv {
-                                cmd.push(vec!['.'; 2 * used]);
-                            }
-                            cmd[lv][cmd_x] = c;
+                        for &c in cs.iter() {
+                            add(cmd_y_of_v, cmd_x, c);
+                            cmd_y_of_v += 1;
                         }
-                        if cmd.len() <= cs.len() {
-                            cmd.push(vec!['.'; 2 * used]);
-                        }
-                        cmd[cs.len()][arm_idx1 + arm_shape.len() - 1] = 'P';
+                        cmd_delta.chmax(cs.len() + 1);
                     }
+                    add(cmd_y_of_v, arm_idx1 + arm_shape.len() - 1, 'P');
+                    //cmd_y_of_v += 1;
                     //
                     dir = dir1;
+                    cmd_y += cmd_delta;
                 }
                 arm_idx0 += arm_shape.len();
                 arm_idx1 += arm_shape.len();
