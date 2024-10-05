@@ -5874,6 +5874,7 @@ fn main() {
 mod solver {
     use super::*;
     type Set<K> = BTreeSet<K>;
+    type Map<K, V> = BTreeMap<K, V>;
     const RIGHT: usize = 0;
     const UPPER: usize = 1;
     const LEFT: usize = 2;
@@ -5889,12 +5890,15 @@ mod solver {
         [1, 2, 1, 0],
     ];
     mod state {
+        use super::*;
         #[derive(Clone, Debug)]
         pub struct State {
             pub ini: bool,
             pub rem: Vec<u32>,
             pub tgt: Vec<u32>,
             pub dir: Vec<usize>,
+            pub cap: Vec<bool>,
+            pub cost: usize,
         }
         impl State {
             pub fn empty(n: usize, arm_num: usize) -> Self {
@@ -5903,25 +5907,115 @@ mod solver {
                     rem: vec![0; n],
                     tgt: vec![0; n],
                     dir: vec![0; arm_num],
+                    cap: vec![false; arm_num],
+                    cost: 0,
                 }
+            }
+            pub fn move_and_update(
+                &mut self,
+                n: usize,
+                arm_shapes: &[ArmShape],
+                y: usize,
+                x: usize,
+            ) {
+                let mut tot_cap_cost = 0;
+                let mut tot_rel_cost = 0;
+                loop {
+                    // capture
+                    let cap_cost = {
+                        let mut cap_cost = 0;
+                        for (dir, (arm_shape, cap)) in self
+                            .dir
+                            .iter_mut()
+                            .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
+                        {
+                            if *cap {
+                                continue;
+                            }
+                            for (&(dy, dx), &ndir) in arm_shape.deltas.iter() {
+                                if y as i32 + dy < 0
+                                    || y as i32 + dy >= n as i32
+                                    || x as i32 + dx < 0
+                                    || x as i32 + dx >= n as i32
+                                {
+                                    continue;
+                                }
+                                let ny = (y as i32 + dy) as usize;
+                                let nx = (x as i32 + dx) as usize;
+                                if ((self.rem[ny] >> nx) & 1) == 0 {
+                                    continue;
+                                }
+                                // found
+                                *cap = true;
+                                self.rem[ny] &= !(1u32 << nx);
+                                cap_cost.chmax(arm_shape.rot_cost(*dir, ndir));
+                                *dir = ndir;
+                                break;
+                            }
+                        }
+                        cap_cost
+                    };
+                    // release
+                    let rel_cost = {
+                        let mut rel_cost = 0;
+                        for (dir, (arm_shape, cap)) in self
+                            .dir
+                            .iter_mut()
+                            .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
+                        {
+                            if !*cap {
+                                continue;
+                            }
+                            for (&(dy, dx), &ndir) in arm_shape.deltas.iter() {
+                                if y as i32 + dy < 0
+                                    || y as i32 + dy >= n as i32
+                                    || x as i32 + dx < 0
+                                    || x as i32 + dx >= n as i32
+                                {
+                                    continue;
+                                }
+                                let ny = (y as i32 + dy) as usize;
+                                let nx = (x as i32 + dx) as usize;
+                                if ((self.tgt[ny] >> nx) & 1) == 0 {
+                                    continue;
+                                }
+                                // found
+                                *cap = false;
+                                self.tgt[ny] &= !(1u32 << nx);
+                                rel_cost.chmax(arm_shape.rot_cost(*dir, ndir));
+                                *dir = ndir;
+                                break;
+                            }
+                        }
+                        rel_cost
+                    };
+                    tot_cap_cost += cap_cost;
+                    tot_rel_cost += rel_cost;
+                    if rel_cost == 0 {
+                        break;
+                    }
+                }
+                self.cost += tot_cap_cost + tot_rel_cost;
             }
         }
     }
-    mod arm {
+    use state::State;
+    mod arm_shape {
         use super::*;
-        pub struct Arm {
+        pub struct ArmShape {
             ls: Vec<usize>,
-            deltas: Vec<(i32, i32)>,
+            pub deltas: Map<(i32, i32), usize>,
             vs: Vec<usize>,
         }
-        impl Arm {
+        impl ArmShape {
             pub fn new(ls: Vec<usize>, nxt_v: usize) -> Self {
-                let mut deltas = Set::new();
-                for mut bit in 0usize..(1 << (2 * ls.len())) {
+                let mut deltas = Map::new();
+                for dir0 in 0usize..(1 << (2 * ls.len())) {
+                    let mut dir = dir0;
                     let mut y = 0;
                     let mut x = 0;
                     for &l in ls.iter() {
-                        match bit & 3 {
+                        match dir & 3 {
                             RIGHT => {
                                 x += l as i32;
                             }
@@ -5936,18 +6030,25 @@ mod solver {
                             }
                             _ => unreachable!(),
                         }
-                        bit = bit >> 2;
+                        dir = dir >> 2;
                     }
-                    deltas.insert((y, x));
+                    deltas.insert((y, x), dir0);
                 }
                 let vs = (nxt_v..).take(ls.len()).collect_vec();
-                Self {
-                    ls,
-                    deltas: deltas.into_iter().collect_vec(),
-                    vs,
-                }
+                Self { ls, deltas, vs }
             }
-            pub fn gen_arms(mut v: usize) -> Vec<Self> {
+            pub fn rot_cost(&self, mut dir0: usize, mut dir1: usize) -> usize {
+                let mut cost = 0;
+                for _ in 0..self.ls.len() {
+                    let d0 = dir0 & 3;
+                    let d1 = dir1 & 3;
+                    cost.chmax(ROT[d0][d1]);
+                    dir0 = dir0 >> 2;
+                    dir1 = dir1 >> 2;
+                }
+                cost
+            }
+            pub fn gen(mut v: usize) -> Vec<Self> {
                 v -= 1;
                 let mut used = 1;
                 let mut arms = vec![];
@@ -5974,7 +6075,7 @@ mod solver {
             }
         }
     }
-    use arm::Arm;
+    use arm_shape::ArmShape;
     pub struct Solver {
         t0: Instant,
         n: usize,
@@ -5987,9 +6088,9 @@ mod solver {
         pub fn new() -> Self {
             let t0 = Instant::now();
             let n = read::<usize>();
-            let m = read::<usize>();
+            let mut m = read::<usize>();
             let v = read::<usize>();
-            let s = (0..n)
+            let mut s = (0..n)
                 .map(|_| -> u32 {
                     let mut row = 0;
                     for (x, v) in read::<String>().chars().enumerate() {
@@ -6000,7 +6101,7 @@ mod solver {
                     row
                 })
                 .collect_vec();
-            let t = (0..n)
+            let mut t = (0..n)
                 .map(|_| -> u32 {
                     let mut row = 0;
                     for (x, v) in read::<String>().chars().enumerate() {
@@ -6011,6 +6112,15 @@ mod solver {
                     row
                 })
                 .collect_vec();
+            for y in 0..n {
+                for x in 0..n {
+                    if (((s[y] >> x) & 1) != 0) && (((t[y] >> x) & 1) != 0) {
+                        s[y] &= !(1u32 << x);
+                        t[y] &= !(1u32 << x);
+                        m -= 1;
+                    }
+                }
+            }
             debug_assert_eq!(m, s.iter().map(|s| s.count_ones() as usize).sum::<usize>());
             debug_assert_eq!(m, t.iter().map(|s| s.count_ones() as usize).sum::<usize>());
             Self { t0, n, m, v, s, t }
@@ -6035,9 +6145,21 @@ mod solver {
             (y_ave, x_ave)
         }
         pub fn solve(&self) {
-            let arms = Arm::gen_arms(self.v);
+            let arm_shapes = ArmShape::gen(self.v);
             let (y_ini, x_ini) = self.gen_ini();
             println!("{y_ini} {x_ini}");
+            const T: usize = 1000;
+            let mut dp =
+                vec![vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n]; T];
+            dp[0][y_ini][x_ini] = State {
+                ini: true,
+                rem: self.s.clone(),
+                tgt: self.t.clone(),
+                dir: vec![0; arm_shapes.len()],
+                cap: vec![false; arm_shapes.len()],
+                cost: 0,
+            };
+            dp[0][y_ini][x_ini].move_and_update(self.n, &arm_shapes, 0, 0);
         }
     }
 }
