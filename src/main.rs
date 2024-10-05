@@ -5891,25 +5891,45 @@ mod solver {
     ];
     mod state {
         use super::*;
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Debug, PartialEq)]
         pub struct State {
-            pub ini: bool,
+            pub empty: bool,
             pub rem: Vec<u32>,
             pub tgt: Vec<u32>,
             pub dir: Vec<usize>,
             pub cap: Vec<bool>,
-            pub cost: usize,
+        }
+        impl PartialOrd for State {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(
+                    (
+                        self.empty,
+                        self.rem.iter().map(|x| x.count_ones()).sum::<u32>()
+                            + self.tgt.iter().map(|x| x.count_ones()).sum::<u32>(),
+                    )
+                        .cmp(&(
+                            other.empty,
+                            other.rem.iter().map(|x| x.count_ones()).sum::<u32>()
+                                + other.tgt.iter().map(|x| x.count_ones()).sum::<u32>(),
+                        )),
+                )
+            }
         }
         impl State {
             pub fn empty(n: usize, arm_num: usize) -> Self {
                 State {
-                    ini: false,
+                    empty: true,
                     rem: vec![0; n],
                     tgt: vec![0; n],
                     dir: vec![0; arm_num],
                     cap: vec![false; arm_num],
-                    cost: 0,
                 }
+            }
+            pub fn fin(&self) -> bool {
+                !self.empty
+                    && self.rem.iter().all(|&x| x == 0)
+                    && self.tgt.iter().all(|&x| x == 0)
+                    && self.cap.iter().all(|&x| !x)
             }
             pub fn move_and_update(
                 &mut self,
@@ -5917,85 +5937,58 @@ mod solver {
                 arm_shapes: &[ArmShape],
                 y: usize,
                 x: usize,
-            ) {
-                let mut tot_cap_cost = 0;
-                let mut tot_rel_cost = 0;
+            ) -> usize {
+                debug_assert!(!self.empty);
+                let mut rot_and_caprel_cost = vec![0; self.cap.len()];
                 loop {
-                    // capture
-                    let cap_cost = {
-                        let mut cap_cost = 0;
-                        for (dir, (arm_shape, cap)) in self
-                            .dir
-                            .iter_mut()
-                            .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
-                        {
-                            if *cap {
+                    let mut upd = false;
+                    for ((cost, dir), (arm_shape, cap)) in rot_and_caprel_cost
+                        .iter_mut()
+                        .zip(self.dir.iter_mut())
+                        .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
+                    {
+                        for (&(dy, dx), &ndir) in arm_shape.deltas.iter() {
+                            if y as i32 + dy < 0
+                                || y as i32 + dy >= n as i32
+                                || x as i32 + dx < 0
+                                || x as i32 + dx >= n as i32
+                            {
                                 continue;
                             }
-                            for (&(dy, dx), &ndir) in arm_shape.deltas.iter() {
-                                if y as i32 + dy < 0
-                                    || y as i32 + dy >= n as i32
-                                    || x as i32 + dx < 0
-                                    || x as i32 + dx >= n as i32
-                                {
-                                    continue;
-                                }
-                                let ny = (y as i32 + dy) as usize;
-                                let nx = (x as i32 + dx) as usize;
+                            let ny = (y as i32 + dy) as usize;
+                            let nx = (x as i32 + dx) as usize;
+                            if !*cap {
+                                // may capture
                                 if ((self.rem[ny] >> nx) & 1) == 0 {
                                     continue;
                                 }
                                 // found
-                                *cap = true;
+                                *cap = !*cap;
                                 self.rem[ny] &= !(1u32 << nx);
-                                cap_cost.chmax(arm_shape.rot_cost(*dir, ndir));
+                                *cost += arm_shape.rot_cost(*dir, ndir) + 1;
                                 *dir = ndir;
+                                upd = true;
                                 break;
-                            }
-                        }
-                        cap_cost
-                    };
-                    // release
-                    let rel_cost = {
-                        let mut rel_cost = 0;
-                        for (dir, (arm_shape, cap)) in self
-                            .dir
-                            .iter_mut()
-                            .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
-                        {
-                            if !*cap {
-                                continue;
-                            }
-                            for (&(dy, dx), &ndir) in arm_shape.deltas.iter() {
-                                if y as i32 + dy < 0
-                                    || y as i32 + dy >= n as i32
-                                    || x as i32 + dx < 0
-                                    || x as i32 + dx >= n as i32
-                                {
-                                    continue;
-                                }
-                                let ny = (y as i32 + dy) as usize;
-                                let nx = (x as i32 + dx) as usize;
+                            } else {
+                                // may release
                                 if ((self.tgt[ny] >> nx) & 1) == 0 {
                                     continue;
                                 }
                                 // found
-                                *cap = false;
+                                *cap = !*cap;
                                 self.tgt[ny] &= !(1u32 << nx);
-                                rel_cost.chmax(arm_shape.rot_cost(*dir, ndir));
+                                *cost += arm_shape.rot_cost(*dir, ndir) + 1;
                                 *dir = ndir;
+                                upd = true;
                                 break;
                             }
                         }
-                        rel_cost
-                    };
-                    tot_cap_cost += cap_cost;
-                    tot_rel_cost += rel_cost;
-                    if rel_cost == 0 {
+                    }
+                    if !upd {
                         break;
                     }
                 }
-                self.cost += tot_cap_cost + tot_rel_cost;
+                rot_and_caprel_cost.into_iter().max().unwrap()
             }
         }
     }
@@ -6030,7 +6023,7 @@ mod solver {
                             }
                             _ => unreachable!(),
                         }
-                        dir = dir >> 2;
+                        dir >>= 2;
                     }
                     deltas.insert((y, x), dir0);
                 }
@@ -6043,8 +6036,8 @@ mod solver {
                     let d0 = dir0 & 3;
                     let d1 = dir1 & 3;
                     cost.chmax(ROT[d0][d1]);
-                    dir0 = dir0 >> 2;
-                    dir1 = dir1 >> 2;
+                    dir0 >>= 2;
+                    dir1 >>= 2;
                 }
                 cost
             }
@@ -6148,18 +6141,69 @@ mod solver {
             let arm_shapes = ArmShape::gen(self.v);
             let (y_ini, x_ini) = self.gen_ini();
             println!("{y_ini} {x_ini}");
-            const T: usize = 1000;
+            const T: usize = 10000;
             let mut dp =
-                vec![vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n]; T];
-            dp[0][y_ini][x_ini] = State {
-                ini: true,
-                rem: self.s.clone(),
-                tgt: self.t.clone(),
-                dir: vec![0; arm_shapes.len()],
-                cap: vec![false; arm_shapes.len()],
-                cost: 0,
-            };
-            dp[0][y_ini][x_ini].move_and_update(self.n, &arm_shapes, 0, 0);
+                vec![vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n]; T + 1];
+            let mut pre = vec![vec![vec![None; self.n]; self.n]; T + 1];
+            {
+                let mut state_ini = State {
+                    empty: false,
+                    rem: self.s.clone(),
+                    tgt: self.t.clone(),
+                    dir: vec![0; arm_shapes.len()],
+                    cap: vec![false; arm_shapes.len()],
+                };
+                let dcost = state_ini.move_and_update(self.n, &arm_shapes, y_ini, x_ini);
+                dp[dcost][y_ini][x_ini] = state_ini;
+                pre[dcost][y_ini][x_ini] = Some((0, y_ini, x_ini));
+            }
+            'all: for ti0 in 0..T {
+                for y0 in 0..self.n {
+                    for x0 in 0..self.n {
+                        if dp[ti0][y0][x0].empty {
+                            continue;
+                        }
+                        for (dy, dx) in [(1, 0), (0, 1), (-1, 0), (0, -1)] {
+                            if y0 as i32 + dy < 0
+                                || y0 as i32 + dy >= self.n as i32
+                                || x0 as i32 + dx < 0
+                                || x0 as i32 + dx >= self.n as i32
+                            {
+                                continue;
+                            }
+                            let mut nstate = dp[ti0][y0][x0].clone();
+                            let y1 = (y0 as i32 + dy) as usize;
+                            let x1 = (x0 as i32 + dx) as usize;
+                            let rot_and_caprel_cost =
+                                nstate.move_and_update(self.n, &arm_shapes, y1, x1);
+                            let ti1 = ti0 + max(1, rot_and_caprel_cost);
+                            if dp[ti1][y1][x1] > nstate {
+                                dp[ti1][y1][x1] = nstate;
+                                pre[ti1][y1][x1] = Some((ti0, y0, x0));
+                                if dp[ti1][y1][x1].fin() {
+                                    break 'all;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut fin_ti = 0;
+            for ti in 0..=T {
+                if dp[ti].iter().any(|dp| {
+                    dp.iter().any(|state| {
+                        !state.empty
+                            && state.rem.iter().map(|rem| rem.count_ones()).sum::<u32>() == 0
+                            && state.tgt.iter().map(|rem| rem.count_ones()).sum::<u32>() == 0
+                            && state.cap.iter().all(|&cap| !cap)
+                    })
+                }) {
+                    fin_ti = ti;
+                    break;
+                }
+            }
+            eprint!("{}ms ", self.t0.elapsed().as_millis());
+            eprintln!("{fin_ti}turn");
         }
     }
 }
