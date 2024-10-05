@@ -5868,5 +5868,176 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 
 fn main() {
-    read::<usize>();
+    solver::Solver::new().solve();
+}
+
+mod solver {
+    use super::*;
+    type Set<K> = BTreeSet<K>;
+    const RIGHT: usize = 0;
+    const UPPER: usize = 1;
+    const LEFT: usize = 2;
+    const LOWER: usize = 3;
+    const ROT: [[usize; 4]; 4] = [
+        // RIGHT ->
+        [0, 1, 2, 1],
+        // UPPER ->
+        [1, 0, 1, 2],
+        // LEFT ->
+        [2, 1, 0, 1],
+        // LOWER ->
+        [1, 2, 1, 0],
+    ];
+    mod state {
+        #[derive(Clone, Debug)]
+        pub struct State {
+            pub ini: bool,
+            pub rem: Vec<u32>,
+            pub tgt: Vec<u32>,
+            pub dir: Vec<usize>,
+        }
+        impl State {
+            pub fn empty(n: usize, arm_num: usize) -> Self {
+                State {
+                    ini: false,
+                    rem: vec![0; n],
+                    tgt: vec![0; n],
+                    dir: vec![0; arm_num],
+                }
+            }
+        }
+    }
+    mod arm {
+        use super::*;
+        pub struct Arm {
+            ls: Vec<usize>,
+            deltas: Vec<(i32, i32)>,
+            vs: Vec<usize>,
+        }
+        impl Arm {
+            pub fn new(ls: Vec<usize>, nxt_v: usize) -> Self {
+                let mut deltas = Set::new();
+                for mut bit in 0usize..(1 << (2 * ls.len())) {
+                    let mut y = 0;
+                    let mut x = 0;
+                    for &l in ls.iter() {
+                        match bit & 3 {
+                            RIGHT => {
+                                x += l as i32;
+                            }
+                            LEFT => {
+                                x -= l as i32;
+                            }
+                            UPPER => {
+                                y -= l as i32;
+                            }
+                            LOWER => {
+                                y += l as i32;
+                            }
+                            _ => unreachable!(),
+                        }
+                        bit = bit >> 2;
+                    }
+                    deltas.insert((y, x));
+                }
+                let vs = (nxt_v..).take(ls.len()).collect_vec();
+                Self {
+                    ls,
+                    deltas: deltas.into_iter().collect_vec(),
+                    vs,
+                }
+            }
+            pub fn gen_arms(mut v: usize) -> Vec<Self> {
+                v -= 1;
+                let mut used = 1;
+                let mut arms = vec![];
+                let mut nxt_v = 1;
+                for l in 1.. {
+                    if l > v {
+                        break;
+                    }
+                    let arm = Self::new(vec![1; l], nxt_v);
+                    arms.push(arm);
+                    v -= l;
+                    used += l;
+                    nxt_v += l;
+                }
+                println!("{used}");
+                for arm in arms.iter() {
+                    let mut p = 0;
+                    for (&l, &v) in arm.ls.iter().zip(arm.vs.iter()) {
+                        println!("{p} {l}");
+                        p = v;
+                    }
+                }
+                arms
+            }
+        }
+    }
+    use arm::Arm;
+    pub struct Solver {
+        t0: Instant,
+        n: usize,
+        m: usize,
+        v: usize,
+        s: Vec<u32>,
+        t: Vec<u32>,
+    }
+    impl Solver {
+        pub fn new() -> Self {
+            let t0 = Instant::now();
+            let n = read::<usize>();
+            let m = read::<usize>();
+            let v = read::<usize>();
+            let s = (0..n)
+                .map(|_| -> u32 {
+                    let mut row = 0;
+                    for (x, v) in read::<String>().chars().enumerate() {
+                        if v == '1' {
+                            row |= 1 << x;
+                        }
+                    }
+                    row
+                })
+                .collect_vec();
+            let t = (0..n)
+                .map(|_| -> u32 {
+                    let mut row = 0;
+                    for (x, v) in read::<String>().chars().enumerate() {
+                        if v == '1' {
+                            row |= 1 << x;
+                        }
+                    }
+                    row
+                })
+                .collect_vec();
+            debug_assert_eq!(m, s.iter().map(|s| s.count_ones() as usize).sum::<usize>());
+            debug_assert_eq!(m, t.iter().map(|s| s.count_ones() as usize).sum::<usize>());
+            Self { t0, n, m, v, s, t }
+        }
+        fn gen_ini(&self) -> (usize, usize) {
+            let mut y_sum = 0;
+            let mut x_sum = 0;
+            for y in 0..self.n {
+                for x in 0..self.n {
+                    if ((self.s[y] >> x) & 1) != 0 {
+                        y_sum += y;
+                        x_sum += x;
+                    }
+                    if ((self.t[y] >> x) & 1) != 0 {
+                        y_sum += y;
+                        x_sum += x;
+                    }
+                }
+            }
+            let y_ave = y_sum / (2 * self.m);
+            let x_ave = x_sum / (2 * self.m);
+            (y_ave, x_ave)
+        }
+        pub fn solve(&self) {
+            let arms = Arm::gen_arms(self.v);
+            let (y_ini, x_ini) = self.gen_ini();
+            println!("{y_ini} {x_ini}");
+        }
+    }
 }
