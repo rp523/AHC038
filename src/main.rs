@@ -5893,32 +5893,14 @@ mod solver {
         use super::*;
         #[derive(Clone, Debug, PartialEq)]
         pub struct State {
-            pub empty: bool,
             pub rem: Vec<u32>,
             pub tgt: Vec<u32>,
             pub dir: Vec<usize>,
             pub cap: Vec<bool>,
         }
-        impl PartialOrd for State {
-            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                Some(
-                    (
-                        self.empty,
-                        self.rem.iter().map(|x| x.count_ones()).sum::<u32>()
-                            + self.tgt.iter().map(|x| x.count_ones()).sum::<u32>(),
-                    )
-                        .cmp(&(
-                            other.empty,
-                            other.rem.iter().map(|x| x.count_ones()).sum::<u32>()
-                                + other.tgt.iter().map(|x| x.count_ones()).sum::<u32>(),
-                        )),
-                )
-            }
-        }
         impl State {
             pub fn empty(n: usize, arm_num: usize) -> Self {
                 State {
-                    empty: true,
                     rem: vec![0; n],
                     tgt: vec![0; n],
                     dir: vec![0; arm_num],
@@ -5926,8 +5908,7 @@ mod solver {
                 }
             }
             pub fn fin(&self) -> bool {
-                !self.empty
-                    && self.rem.iter().all(|&x| x == 0)
+                self.rem.iter().all(|&x| x == 0)
                     && self.tgt.iter().all(|&x| x == 0)
                     && self.cap.iter().all(|&x| !x)
             }
@@ -5937,11 +5918,12 @@ mod solver {
                 arm_shapes: &[ArmShape],
                 y: usize,
                 x: usize,
-            ) -> usize {
-                debug_assert!(!self.empty);
+            ) -> (usize, usize) {
                 let mut rot_and_caprel_cost = vec![0; self.cap.len()];
+                let mut gain = 0;
                 loop {
                     let mut upd = false;
+                    // arm loop
                     for ((cost, dir), (arm_shape, cap)) in rot_and_caprel_cost
                         .iter_mut()
                         .zip(self.dir.iter_mut())
@@ -5967,6 +5949,7 @@ mod solver {
                                 self.rem[ny] &= !(1u32 << nx);
                                 *cost += reform.cost + 1;
                                 *dir = reform.dir;
+                                gain += 1;
                                 upd = true;
                                 break;
                             } else {
@@ -5979,6 +5962,7 @@ mod solver {
                                 self.tgt[ny] &= !(1u32 << nx);
                                 *cost += reform.cost + 1;
                                 *dir = reform.dir;
+                                gain += 1;
                                 upd = true;
                                 break;
                             }
@@ -5988,7 +5972,7 @@ mod solver {
                         break;
                     }
                 }
-                rot_and_caprel_cost.into_iter().max().unwrap()
+                (gain, rot_and_caprel_cost.into_iter().max().unwrap())
             }
         }
     }
@@ -6032,24 +6016,28 @@ mod solver {
                     }
                     (dy, dx)
                 }
-                let points = (0..(1 << (2 * ls.len()))).map(|dir| dir_to_point(dir, &ls)).collect_vec();
-                let point_to_dir = (0..(1 << (2 * ls.len()))).map(|dir0| {
+                let points = (0..(1 << (2 * ls.len())))
+                    .map(|dir| dir_to_point(dir, &ls))
+                    .collect_vec();
+                let point_to_dir = (0..(1 << (2 * ls.len())))
+                    .map(|dir0| {
                         let mut point_to_dir = Map::new();
                         const INF: usize = 1usize << 60;
                         for (dir1, &(dy1, dx1)) in points.iter().enumerate() {
                             let cost = Self::rot_cost(ls.len(), dir0, dir1);
-                            point_to_dir.entry((dy1, dx1)).or_insert((INF, 0)).chmin((cost, dir1));
+                            point_to_dir
+                                .entry((dy1, dx1))
+                                .or_insert((INF, 0))
+                                .chmin((cost, dir1));
                         }
                         let mut point_to_dir = point_to_dir
                             .into_iter()
-                            .map(|((dy, dx), (cost, dir))| Reform{
-                                dy, dx, cost, dir
-                            })
+                            .map(|((dy, dx), (cost, dir))| Reform { dy, dx, cost, dir })
                             .collect_vec();
                         point_to_dir.sort_by_cached_key(|reform| reform.cost);
                         point_to_dir
-                    }
-                ).collect_vec();
+                    })
+                    .collect_vec();
                 let vs = (nxt_v..).take(ls.len()).collect_vec();
                 Self {
                     ls,
@@ -6175,71 +6163,78 @@ mod solver {
         }
         pub fn solve(&self) {
             let arm_shapes = ArmShape::gen(self.v);
-            let (y_ini, x_ini) = self.gen_ini();
-            println!("{y_ini} {x_ini}");
-            const T: usize = 10000;
-            let mut dp =
-                vec![vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n]; T + 1];
-            let mut pre = vec![vec![vec![None; self.n]; self.n]; T + 1];
-            {
-                let mut state_ini = State {
-                    empty: false,
-                    rem: self.s.clone(),
-                    tgt: self.t.clone(),
-                    dir: vec![0; arm_shapes.len()],
-                    cap: vec![false; arm_shapes.len()],
-                };
-                let dcost = state_ini.move_and_update(self.n, &arm_shapes, y_ini, x_ini);
-                dp[dcost][y_ini][x_ini] = state_ini;
-                pre[dcost][y_ini][x_ini] = Some((0, y_ini, x_ini));
-            }
-            'all: for ti0 in 0..T {
-                for y0 in 0..self.n {
-                    for x0 in 0..self.n {
-                        if dp[ti0][y0][x0].empty {
+            let (mut y_now, mut x_now) = self.gen_ini();
+            println!("{y_now} {x_now}");
+
+            let mut state = State {
+                rem: self.s.clone(),
+                tgt: self.t.clone(),
+                dir: vec![0; arm_shapes.len()],
+                cap: vec![false; arm_shapes.len()],
+            };
+            let mut dp = vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n];
+            dp[y_now][x_now] = state.clone();
+            let mut pre = vec![vec![(0, 0); self.n]; self.n];
+            let mut cum_cost = 0;
+            for _li in 0.. {
+                let mut eval = vec![vec![None; self.n]; self.n];
+                eval[y_now][x_now] = Some(0.0);
+                let mut dist = vec![vec![self.n * self.n; self.n]; self.n];
+                dist[y_now][x_now] = 0;
+                let mut cost = vec![vec![0; self.n]; self.n];
+                let mut gain = vec![vec![0; self.n]; self.n];
+                let mut best = None;
+                let mut best_pt = (0, 0);
+                let mut que = VecDeque::new();
+                que.push_back((y_now, x_now));
+                while let Some((y0, x0)) = que.pop_front() {
+                    let d0 = dist[y0][x0];
+                    let d1 = d0 + 1;
+                    for (dy, dx) in [(1, 0), (0, 1), (-1, 0), (0, -1)] {
+                        if y0 as i32 + dy < 0
+                            || y0 as i32 + dy >= self.n as i32
+                            || x0 as i32 + dx < 0
+                            || x0 as i32 + dx >= self.n as i32
+                        {
                             continue;
                         }
-                        for (dy, dx) in [(1, 0), (0, 1), (-1, 0), (0, -1)] {
-                            if y0 as i32 + dy < 0
-                                || y0 as i32 + dy >= self.n as i32
-                                || x0 as i32 + dx < 0
-                                || x0 as i32 + dx >= self.n as i32
-                            {
-                                continue;
+                        let y1 = (y0 as i32 + dy) as usize;
+                        let x1 = (x0 as i32 + dx) as usize;
+                        let mut nstate = dp[y0][x0].clone();
+                        let (dgain, dcost) = nstate.move_and_update(self.n, &arm_shapes, y1, x1);
+                        let gain1 = gain[y0][x0] + dgain;
+                        let cost1 = cost[y0][x0] + max(1, dcost);
+                        let eval1 = gain1 as f64 / cost1 as f64;
+                        if dist[y1][x1].chmin(d1) {
+                            que.push_back((y1, x1));
+                            eval[y1][x1] = Some(eval1);
+                            cost[y1][x1] = cost1;
+                            gain[y1][x1] = gain1;
+                            dp[y1][x1] = nstate;
+                            pre[y1][x1] = (y0, x0);
+                            if best.chmax(eval1) {
+                                best_pt = (y1, x1);
                             }
-                            let mut nstate = dp[ti0][y0][x0].clone();
-                            let y1 = (y0 as i32 + dy) as usize;
-                            let x1 = (x0 as i32 + dx) as usize;
-                            let rot_and_caprel_cost =
-                                nstate.move_and_update(self.n, &arm_shapes, y1, x1);
-                            let ti1 = ti0 + max(1, rot_and_caprel_cost);
-                            if dp[ti1][y1][x1] > nstate {
-                                dp[ti1][y1][x1] = nstate;
-                                pre[ti1][y1][x1] = Some((ti0, y0, x0));
-                                if dp[ti1][y1][x1].fin() {
-                                    break 'all;
-                                }
+                        } else if dist[y1][x1] == d1 && eval[y1][x1].chmax(eval1) {
+                            cost[y1][x1] = cost1;
+                            gain[y1][x1] = gain1;
+                            dp[y1][x1] = nstate;
+                            pre[y1][x1] = (y0, x0);
+                            if best.chmax(eval1) {
+                                best_pt = (y1, x1);
                             }
                         }
                     }
                 }
-            }
-            let mut fin_ti = 0;
-            for ti in 0..=T {
-                if dp[ti].iter().any(|dp| {
-                    dp.iter().any(|state| {
-                        !state.empty
-                            && state.rem.iter().map(|rem| rem.count_ones()).sum::<u32>() == 0
-                            && state.tgt.iter().map(|rem| rem.count_ones()).sum::<u32>() == 0
-                            && state.cap.iter().all(|&cap| !cap)
-                    })
-                }) {
-                    fin_ti = ti;
+                debug_assert!(best.is_some());
+                (y_now, x_now) = best_pt;
+                state = dp[y_now][x_now].clone();
+                cum_cost += cost[y_now][x_now];
+                if state.fin() {
                     break;
                 }
             }
-            eprint!("{}ms ", self.t0.elapsed().as_millis());
-            eprintln!("{fin_ti}turn");
+            eprintln!("{}turn {}ms", cum_cost, self.t0.elapsed().as_millis());
         }
     }
 }
