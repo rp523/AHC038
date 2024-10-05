@@ -5918,16 +5918,18 @@ mod solver {
                 arm_shapes: &[ArmShape],
                 y: usize,
                 x: usize,
-            ) -> (usize, usize) {
+            ) -> (usize, usize, Vec<Vec<usize>>) {
                 let mut rot_and_caprel_cost = vec![0; self.cap.len()];
                 let mut gain = 0;
+                let mut dir_upd = vec![vec![]; self.cap.len()];
                 loop {
                     let mut upd = false;
                     // arm loop
-                    for ((cost, dir), (arm_shape, cap)) in rot_and_caprel_cost
+                    for (((cost, dir), (arm_shape, cap)), dir_upd) in rot_and_caprel_cost
                         .iter_mut()
                         .zip(self.dir.iter_mut())
                         .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
+                        .zip(dir_upd.iter_mut())
                     {
                         for &reform in arm_shape.reforms(*dir) {
                             if y as i32 + reform.dy < 0
@@ -5951,6 +5953,7 @@ mod solver {
                                 *dir = reform.dir;
                                 gain += 1;
                                 upd = true;
+                                dir_upd.push(*dir);
                                 break;
                             } else {
                                 // may release
@@ -5964,6 +5967,7 @@ mod solver {
                                 *dir = reform.dir;
                                 gain += 1;
                                 upd = true;
+                                dir_upd.push(*dir);
                                 break;
                             }
                         }
@@ -5972,7 +5976,11 @@ mod solver {
                         break;
                     }
                 }
-                (gain, rot_and_caprel_cost.into_iter().max().unwrap())
+                (
+                    gain,
+                    rot_and_caprel_cost.into_iter().max().unwrap(),
+                    dir_upd,
+                )
             }
         }
     }
@@ -6046,6 +6054,23 @@ mod solver {
                 }
             }
             #[inline(always)]
+            pub fn rot_cmd(
+                &self,
+                cmd_base: &[Vec<Vec<char>>],
+                mut dir0: usize,
+                mut dir1: usize,
+            ) -> Vec<Vec<char>> {
+                let mut cmd = vec![vec![]; self.len()];
+                for i in 0..self.len() {
+                    let d0 = dir0 & 3;
+                    let d1 = dir1 & 3;
+                    cmd[i] = cmd_base[d0][d1].clone();
+                    dir0 >>= 2;
+                    dir1 >>= 2;
+                }
+                cmd
+            }
+            #[inline(always)]
             pub fn len(&self) -> usize {
                 self.ls.len()
             }
@@ -6065,7 +6090,7 @@ mod solver {
                 }
                 cost
             }
-            pub fn gen(mut v: usize) -> Vec<Self> {
+            pub fn gen(mut v: usize) -> (Vec<Self>, usize) {
                 v -= 1;
                 let mut used = 1;
                 let mut arms = vec![];
@@ -6088,7 +6113,7 @@ mod solver {
                         p = v;
                     }
                 }
-                arms
+                (arms, used)
             }
         }
     }
@@ -6100,6 +6125,7 @@ mod solver {
         v: usize,
         s: Vec<u32>,
         t: Vec<u32>,
+        cmd_base: Vec<Vec<Vec<char>>>,
     }
     impl Solver {
         pub fn new() -> Self {
@@ -6129,6 +6155,38 @@ mod solver {
                     row
                 })
                 .collect_vec();
+            let mut cmd_base = vec![vec![vec![]; 4]; 4];
+            for d0 in 0..4 {
+                for d1 in 0..4 {
+                    match ROT[d0][d1] {
+                        0 => {
+                            //
+                        }
+                        1 => {
+                            if (d0 == RIGHT && d1 == LOWER)
+                                || (d0 == LOWER && d1 == LEFT)
+                                || (d0 == LEFT && d1 == UPPER)
+                                || (d0 == UPPER && d1 == RIGHT)
+                            {
+                                cmd_base[d0][d1].push('R');
+                            } else if (d0 == RIGHT && d1 == UPPER)
+                                || (d0 == UPPER && d1 == LEFT)
+                                || (d0 == LEFT && d1 == LOWER)
+                                || (d0 == LOWER && d1 == RIGHT)
+                            {
+                                cmd_base[d0][d1].push('L');
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        2 => {
+                            cmd_base[d0][d1].push('R');
+                            cmd_base[d0][d1].push('R');
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
             for y in 0..n {
                 for x in 0..n {
                     if (((s[y] >> x) & 1) != 0) && (((t[y] >> x) & 1) != 0) {
@@ -6140,7 +6198,15 @@ mod solver {
             }
             debug_assert_eq!(m, s.iter().map(|s| s.count_ones() as usize).sum::<usize>());
             debug_assert_eq!(m, t.iter().map(|s| s.count_ones() as usize).sum::<usize>());
-            Self { t0, n, m, v, s, t }
+            Self {
+                t0,
+                n,
+                m,
+                v,
+                s,
+                t,
+                cmd_base,
+            }
         }
         fn gen_ini(&self) -> (usize, usize) {
             let mut y_sum = 0;
@@ -6161,20 +6227,80 @@ mod solver {
             let x_ave = x_sum / (2 * self.m);
             (y_ave, x_ave)
         }
+        fn add_cmd(
+            &self,
+            arm_shapes: &[ArmShape],
+            used: usize,
+            state: &State,
+            dir_upd: &[Vec<usize>],
+            dyx: (i32, i32),
+        ) -> Vec<String> {
+            let mut cmd = vec![];
+            let mut arm_idx0 = 1;
+            let mut arm_idx1 = used + 1;
+            for (arm_shape, (&dir0, dir_upd)) in
+                arm_shapes.iter().zip(state.dir.iter().zip(dir_upd.iter()))
+            {
+                // one arm
+                let mut dir = dir0;
+                // repeat
+                for &dir1 in dir_upd.iter() {
+                    let v_cs = arm_shape.rot_cmd(&self.cmd_base, dir, dir1);
+                    for (v, cs) in v_cs.into_iter().enumerate() {
+                        let cmd_x = arm_idx0 + v;
+                        for (lv, &c) in cs.iter().enumerate() {
+                            if cmd.len() <= lv {
+                                cmd.push(vec!['.'; 2 * used]);
+                            }
+                            cmd[lv][cmd_x] = c;
+                        }
+                        if cmd.len() <= cs.len() {
+                            cmd.push(vec!['.'; 2 * used]);
+                        }
+                        cmd[cs.len()][arm_idx1 + arm_shape.len() - 1] = 'P';
+                    }
+                    //
+                    dir = dir1;
+                }
+                arm_idx0 += arm_shape.len();
+                arm_idx1 += arm_shape.len();
+            }
+            if cmd.is_empty() {
+                cmd.push(vec!['.'; 2 * used]);
+            }
+            cmd[0][0] = match dyx {
+                (0, 1) => 'R',
+                (0, -1) => 'L',
+                (1, 0) => 'D',
+                (-1, 0) => 'U',
+                (0, 0) => '.',
+                _ => unreachable!(),
+            };
+            cmd.into_iter()
+                .map(|vc| vc.into_iter().collect::<String>())
+                .collect_vec()
+        }
         pub fn solve(&self) {
-            let arm_shapes = ArmShape::gen(self.v);
+            let (arm_shapes, used) = ArmShape::gen(self.v);
             let (mut y_now, mut x_now) = self.gen_ini();
             println!("{y_now} {x_now}");
 
-            let mut state = State {
+            let mut ans = vec![];
+            let state0 = State {
                 rem: self.s.clone(),
                 tgt: self.t.clone(),
                 dir: vec![0; arm_shapes.len()],
                 cap: vec![false; arm_shapes.len()],
             };
+            let mut state = state0.clone();
+            let (_, _, dir_upd) = state.move_and_update(self.n, &arm_shapes, y_now, x_now);
+            for cmd in self.add_cmd(&arm_shapes, used, &state0, &dir_upd, (0, 0)) {
+                ans.push(cmd);
+            }
+
             let mut dp = vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n];
             dp[y_now][x_now] = state.clone();
-            let mut pre = vec![vec![(0, 0); self.n]; self.n];
+            let mut pre = vec![vec![(0, 0, vec![]); self.n]; self.n];
             let mut cum_cost = 0;
             for _li in 0.. {
                 let mut eval = vec![vec![None; self.n]; self.n];
@@ -6201,7 +6327,8 @@ mod solver {
                         let y1 = (y0 as i32 + dy) as usize;
                         let x1 = (x0 as i32 + dx) as usize;
                         let mut nstate = dp[y0][x0].clone();
-                        let (dgain, dcost) = nstate.move_and_update(self.n, &arm_shapes, y1, x1);
+                        let (dgain, dcost, dir_upd) =
+                            nstate.move_and_update(self.n, &arm_shapes, y1, x1);
                         let gain1 = gain[y0][x0] + dgain;
                         let cost1 = cost[y0][x0] + max(1, dcost);
                         let eval1 = gain1 as f64 / cost1 as f64;
@@ -6211,7 +6338,7 @@ mod solver {
                             cost[y1][x1] = cost1;
                             gain[y1][x1] = gain1;
                             dp[y1][x1] = nstate;
-                            pre[y1][x1] = (y0, x0);
+                            pre[y1][x1] = (y0, x0, dir_upd);
                             if best.chmax(eval1) {
                                 best_pt = (y1, x1);
                             }
@@ -6219,7 +6346,7 @@ mod solver {
                             cost[y1][x1] = cost1;
                             gain[y1][x1] = gain1;
                             dp[y1][x1] = nstate;
-                            pre[y1][x1] = (y0, x0);
+                            pre[y1][x1] = (y0, x0, dir_upd);
                             if best.chmax(eval1) {
                                 best_pt = (y1, x1);
                             }
@@ -6227,12 +6354,32 @@ mod solver {
                     }
                 }
                 debug_assert!(best.is_some());
+                // record
+                {
+                    let mut path = vec![];
+                    let (mut y, mut x) = best_pt;
+                    while (y, x) != (y_now, x_now) {
+                        let (y_pre, x_pre, dir_upd) = &pre[y][x];
+                        path.push(((*y_pre, *x_pre), (y, x), dir_upd));
+                        (y, x) = (*y_pre, *x_pre);
+                    }
+                    for ((y0, x0), (y1, x1), dir_upd) in path.into_iter().rev() {
+                        let dy = y1 as i32 - y0 as i32;
+                        let dx = x1 as i32 - x0 as i32;
+                        for cmd in self.add_cmd(&arm_shapes, used, &dp[y0][x0], dir_upd, (dy, dx)) {
+                            ans.push(cmd);
+                        }
+                    }
+                }
                 (y_now, x_now) = best_pt;
                 state = dp[y_now][x_now].clone();
                 cum_cost += cost[y_now][x_now];
                 if state.fin() {
                     break;
                 }
+            }
+            for ans in ans {
+                println!("{ans}");
             }
             eprintln!("{}turn {}ms", cum_cost, self.t0.elapsed().as_millis());
         }
