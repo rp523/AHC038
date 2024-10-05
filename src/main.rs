@@ -5947,16 +5947,16 @@ mod solver {
                         .zip(self.dir.iter_mut())
                         .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
                     {
-                        for (&(dy, dx), &ndir) in arm_shape.deltas.iter() {
-                            if y as i32 + dy < 0
-                                || y as i32 + dy >= n as i32
-                                || x as i32 + dx < 0
-                                || x as i32 + dx >= n as i32
+                        for &reform in arm_shape.reforms(*dir) {
+                            if y as i32 + reform.dy < 0
+                                || y as i32 + reform.dy >= n as i32
+                                || x as i32 + reform.dx < 0
+                                || x as i32 + reform.dx >= n as i32
                             {
                                 continue;
                             }
-                            let ny = (y as i32 + dy) as usize;
-                            let nx = (x as i32 + dx) as usize;
+                            let ny = (y as i32 + reform.dy) as usize;
+                            let nx = (x as i32 + reform.dx) as usize;
                             if !*cap {
                                 // may capture
                                 if ((self.rem[ny] >> nx) & 1) == 0 {
@@ -5965,8 +5965,8 @@ mod solver {
                                 // found
                                 *cap = !*cap;
                                 self.rem[ny] &= !(1u32 << nx);
-                                *cost += arm_shape.rot_cost(*dir, ndir) + 1;
-                                *dir = ndir;
+                                *cost += reform.cost + 1;
+                                *dir = reform.dir;
                                 upd = true;
                                 break;
                             } else {
@@ -5977,8 +5977,8 @@ mod solver {
                                 // found
                                 *cap = !*cap;
                                 self.tgt[ny] &= !(1u32 << nx);
-                                *cost += arm_shape.rot_cost(*dir, ndir) + 1;
-                                *dir = ndir;
+                                *cost += reform.cost + 1;
+                                *dir = reform.dir;
                                 upd = true;
                                 break;
                             }
@@ -5995,44 +5995,80 @@ mod solver {
     use state::State;
     mod arm_shape {
         use super::*;
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        pub struct Reform {
+            pub dy: i32,
+            pub dx: i32,
+            pub cost: usize,
+            pub dir: usize,
+        }
         pub struct ArmShape {
-            ls: Vec<usize>,
-            pub deltas: Map<(i32, i32), usize>,
+            ls: Vec<i32>,
+            point_to_dir: Vec<Vec<Reform>>,
             vs: Vec<usize>,
         }
         impl ArmShape {
-            pub fn new(ls: Vec<usize>, nxt_v: usize) -> Self {
-                let mut deltas = Map::new();
-                for dir0 in 0usize..(1 << (2 * ls.len())) {
-                    let mut dir = dir0;
-                    let mut y = 0;
-                    let mut x = 0;
+            pub fn new(ls: Vec<i32>, nxt_v: usize) -> Self {
+                fn dir_to_point(mut dir: usize, ls: &[i32]) -> (i32, i32) {
+                    let mut dy = 0;
+                    let mut dx = 0;
                     for &l in ls.iter() {
                         match dir & 3 {
                             RIGHT => {
-                                x += l as i32;
+                                dx += l;
                             }
                             LEFT => {
-                                x -= l as i32;
+                                dx -= l;
                             }
                             UPPER => {
-                                y -= l as i32;
+                                dy -= l;
                             }
                             LOWER => {
-                                y += l as i32;
+                                dy += l;
                             }
                             _ => unreachable!(),
                         }
                         dir >>= 2;
                     }
-                    deltas.insert((y, x), dir0);
+                    (dy, dx)
                 }
+                let points = (0..(1 << (2 * ls.len()))).map(|dir| dir_to_point(dir, &ls)).collect_vec();
+                let point_to_dir = (0..(1 << (2 * ls.len()))).map(|dir0| {
+                        let mut point_to_dir = Map::new();
+                        const INF: usize = 1usize << 60;
+                        for (dir1, &(dy1, dx1)) in points.iter().enumerate() {
+                            let cost = Self::rot_cost(ls.len(), dir0, dir1);
+                            point_to_dir.entry((dy1, dx1)).or_insert((INF, 0)).chmin((cost, dir1));
+                        }
+                        let mut point_to_dir = point_to_dir
+                            .into_iter()
+                            .map(|((dy, dx), (cost, dir))| Reform{
+                                dy, dx, cost, dir
+                            })
+                            .collect_vec();
+                        point_to_dir.sort_by_cached_key(|reform| reform.cost);
+                        point_to_dir
+                    }
+                ).collect_vec();
                 let vs = (nxt_v..).take(ls.len()).collect_vec();
-                Self { ls, deltas, vs }
+                Self {
+                    ls,
+                    point_to_dir,
+                    vs,
+                }
             }
-            pub fn rot_cost(&self, mut dir0: usize, mut dir1: usize) -> usize {
+            #[inline(always)]
+            pub fn len(&self) -> usize {
+                self.ls.len()
+            }
+            #[inline(always)]
+            pub fn reforms(&self, dir: usize) -> &[Reform] {
+                &self.point_to_dir[dir]
+            }
+            #[inline(always)]
+            pub fn rot_cost(ln: usize, mut dir0: usize, mut dir1: usize) -> usize {
                 let mut cost = 0;
-                for _ in 0..self.ls.len() {
+                for _ in 0..ln {
                     let d0 = dir0 & 3;
                     let d1 = dir1 & 3;
                     cost.chmax(ROT[d0][d1]);
@@ -6046,15 +6082,15 @@ mod solver {
                 let mut used = 1;
                 let mut arms = vec![];
                 let mut nxt_v = 1;
-                for l in 1.. {
-                    if l > v {
+                for ln in 1.. {
+                    if ln > v {
                         break;
                     }
-                    let arm = Self::new(vec![1; l], nxt_v);
+                    let arm = Self::new(vec![1; ln], nxt_v);
                     arms.push(arm);
-                    v -= l;
-                    used += l;
-                    nxt_v += l;
+                    v -= ln;
+                    used += ln;
+                    nxt_v += ln;
                 }
                 println!("{used}");
                 for arm in arms.iter() {
