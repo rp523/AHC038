@@ -6102,20 +6102,17 @@ mod solver {
                 }
                 cost
             }
-            pub fn gen(mut v: usize) -> (Vec<Self>, usize) {
-                v -= 1;
-                let mut used = 1;
-                let mut arms = vec![];
-                for ln in 1.. {
-                    if 1 > v {
-                        break;
-                    }
-                    let arm = Self::new(vec![ln as i32; 1], ln);
-                    arms.push(arm);
-                    v -= 1;
-                    used += 1;
-                }
+            pub fn gen(v: usize) -> (Vec<Self>, usize) {
+                let used = v;
                 println!("{used}");
+                let l_min = 1;
+                let arms = (l_min..v)
+                    .enumerate()
+                    .map(|(i, ln)| {
+                        let nxt_v = i + 1;
+                        Self::new(vec![ln as i32; 1], nxt_v)
+                    })
+                    .collect_vec();
                 for arm in arms.iter() {
                     let mut p = 0;
                     for (&l, &v) in arm.ls.iter().zip(arm.vs.iter()) {
@@ -6403,7 +6400,7 @@ mod solver {
             for ans in ans {
                 println!("{ans}");
             }
-            eprintln!("{}turn {}ms", cum_cost, self.t0.elapsed().as_millis());
+            eprintln!("{cum_cost}");
         }
     }
 }
