@@ -6309,6 +6309,7 @@ mod solver {
             println!("{y_now} {x_now}");
 
             let mut ans = vec![];
+            let mut cum_cost = 0;
             let state0 = State {
                 rem: self.s.clone(),
                 tgt: self.t.clone(),
@@ -6316,7 +6317,8 @@ mod solver {
                 cap: vec![false; arm_shapes.len()],
             };
             let mut state = state0.clone();
-            let (_, _, dir_upd) = state.move_and_update(self.n, &arm_shapes, y_now, x_now);
+            let (_dgain, dcost, dir_upd) = state.move_and_update(self.n, &arm_shapes, y_now, x_now);
+            cum_cost += dcost;
             for cmd in self.add_cmd(&arm_shapes, used, &state0, &dir_upd, (0, 0)) {
                 ans.push(cmd);
             }
@@ -6324,7 +6326,6 @@ mod solver {
             let mut dp = vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n];
             dp[y_now][x_now] = state.clone();
             let mut pre = vec![vec![(0, 0, vec![]); self.n]; self.n];
-            let mut cum_cost = 0;
             for _li in 0.. {
                 let mut eval = vec![vec![None; self.n]; self.n];
                 eval[y_now][x_now] = Some(0.0);
