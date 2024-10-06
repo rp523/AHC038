@@ -5893,24 +5893,22 @@ mod solver {
         use super::*;
         #[derive(Clone, Debug, PartialEq)]
         pub struct State {
-            pub rem: Vec<u32>,
-            pub tgt: Vec<u32>,
+            pub rem: FixedBitSet,
+            pub tgt: FixedBitSet,
             pub dir: Vec<usize>,
             pub cap: Vec<bool>,
         }
         impl State {
             pub fn empty(n: usize, arm_num: usize) -> Self {
                 State {
-                    rem: vec![0; n],
-                    tgt: vec![0; n],
+                    rem: FixedBitSet::with_capacity(n * n),
+                    tgt: FixedBitSet::with_capacity(n * n),
                     dir: vec![0; arm_num],
                     cap: vec![false; arm_num],
                 }
             }
             pub fn fin(&self) -> bool {
-                self.rem.iter().all(|&x| x == 0)
-                    && self.tgt.iter().all(|&x| x == 0)
-                    && self.cap.iter().all(|&x| !x)
+                self.rem.is_clear() && self.tgt.is_clear() && self.cap.iter().all(|&x| !x)
             }
             pub fn move_and_update(
                 &mut self,
@@ -5941,14 +5939,15 @@ mod solver {
                             }
                             let ny = (y as i32 + reform.dy) as usize;
                             let nx = (x as i32 + reform.dx) as usize;
+                            let idx = ny * n + nx;
                             if !*cap {
                                 // may capture
-                                if ((self.rem[ny] >> nx) & 1) == 0 {
+                                if !self.rem.contains(idx) {
                                     continue;
                                 }
                                 // found
                                 *cap = !*cap;
-                                self.rem[ny] &= !(1u32 << nx);
+                                self.rem.remove(idx);
                                 *cost += reform.cost + 1;
                                 *dir = reform.dir;
                                 gain += 1;
@@ -5957,12 +5956,12 @@ mod solver {
                                 break;
                             } else {
                                 // may release
-                                if ((self.tgt[ny] >> nx) & 1) == 0 {
+                                if !self.tgt.contains(idx) {
                                     continue;
                                 }
                                 // found
                                 *cap = !*cap;
-                                self.tgt[ny] &= !(1u32 << nx);
+                                self.tgt.remove(idx);
                                 *cost += reform.cost + 1;
                                 *dir = reform.dir;
                                 gain += 1;
@@ -6130,8 +6129,8 @@ mod solver {
         n: usize,
         m: usize,
         v: usize,
-        s: Vec<u32>,
-        t: Vec<u32>,
+        s: FixedBitSet,
+        t: FixedBitSet,
         cmd_base: Vec<Vec<Vec<char>>>,
     }
     impl Solver {
@@ -6140,28 +6139,18 @@ mod solver {
             let n = read::<usize>();
             let mut m = read::<usize>();
             let v = read::<usize>();
-            let mut s = (0..n)
-                .map(|_| -> u32 {
-                    let mut row = 0;
-                    for (x, v) in read::<String>().chars().enumerate() {
-                        if v == '1' {
-                            row |= 1 << x;
-                        }
-                    }
-                    row
-                })
-                .collect_vec();
-            let mut t = (0..n)
-                .map(|_| -> u32 {
-                    let mut row = 0;
-                    for (x, v) in read::<String>().chars().enumerate() {
-                        if v == '1' {
-                            row |= 1 << x;
-                        }
-                    }
-                    row
-                })
-                .collect_vec();
+            let mut s = FixedBitSet::with_capacity(n * n);
+            for y in 0..n {
+                for (x, v) in read::<String>().chars().enumerate() {
+                    s.set(y * n + x, v == '1');
+                }
+            }
+            let mut t = FixedBitSet::with_capacity(n * n);
+            for y in 0..n {
+                for (x, v) in read::<String>().chars().enumerate() {
+                    t.set(y * n + x, v == '1');
+                }
+            }
             let mut cmd_base = vec![vec![vec![]; 4]; 4];
             for d0 in 0..4 {
                 for d1 in 0..4 {
@@ -6194,17 +6183,15 @@ mod solver {
                     }
                 }
             }
-            for y in 0..n {
-                for x in 0..n {
-                    if (((s[y] >> x) & 1) != 0) && (((t[y] >> x) & 1) != 0) {
-                        s[y] &= !(1u32 << x);
-                        t[y] &= !(1u32 << x);
-                        m -= 1;
-                    }
+            for idx in 0..(n * n) {
+                if s.contains(idx) && t.contains(idx) {
+                    s.remove(idx);
+                    t.remove(idx);
+                    m -= 1;
                 }
             }
-            debug_assert_eq!(m, s.iter().map(|s| s.count_ones() as usize).sum::<usize>());
-            debug_assert_eq!(m, t.iter().map(|s| s.count_ones() as usize).sum::<usize>());
+            debug_assert_eq!(m, s.count_ones(..));
+            debug_assert_eq!(m, t.count_ones(..));
             Self {
                 t0,
                 n,
@@ -6220,11 +6207,12 @@ mod solver {
             let mut x_sum = 0;
             for y in 0..self.n {
                 for x in 0..self.n {
-                    if ((self.s[y] >> x) & 1) != 0 {
+                    let idx = y * self.n + x;
+                    if self.s.contains(idx) {
                         y_sum += y;
                         x_sum += x;
                     }
-                    if ((self.t[y] >> x) & 1) != 0 {
+                    if self.t.contains(idx) {
                         y_sum += y;
                         x_sum += x;
                     }
