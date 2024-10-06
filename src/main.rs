@@ -6106,16 +6106,14 @@ mod solver {
                 v -= 1;
                 let mut used = 1;
                 let mut arms = vec![];
-                let mut nxt_v = 1;
                 for ln in 1.. {
-                    if ln > v {
+                    if 1 > v {
                         break;
                     }
-                    let arm = Self::new(vec![1; ln], nxt_v);
+                    let arm = Self::new(vec![ln as i32; 1], ln);
                     arms.push(arm);
-                    v -= ln;
-                    used += ln;
-                    nxt_v += ln;
+                    v -= 1;
+                    used += 1;
                 }
                 println!("{used}");
                 for arm in arms.iter() {
