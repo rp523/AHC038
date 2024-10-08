@@ -6108,6 +6108,100 @@ mod solver {
                     p = v;
                 }
             }
+            pub fn best_split(n: usize, m: usize, v: usize) -> Vec<usize> {
+                fn power(x: f64, mut p: u64) -> f64 {
+                    let mut ret = 1.0;
+                    let mut mul = x;
+                    while p > 0 {
+                        if (p & 1) != 0 {
+                            ret *= mul;
+                        }
+                        p >>= 1;
+                        mul = mul * mul;
+                    }
+                    ret
+                }
+                let p = 0.5 * (m as f64 / (n * n) as f64);
+                let q = 1.0 - p;
+                let used = v - 1;
+                let ex = (0..=used)
+                    .map(|now| 1.0 - power(q, 4u64.pow(now as u32)))
+                    .collect_vec();
+                let mut best_eval = None;
+                let mut best_bit = 0;
+                for bit in 0..(1 << (used - 1)) {
+                    let mut eval = 0.0;
+                    let mut now = 0;
+                    for i in 0..(used - 1) {
+                        now += 1;
+                        if ((bit >> i) & 1) != 0 {
+                            eval += ex[now];
+                            now = 0;
+                        }
+                    }
+                    {
+                        now += 1;
+                        eval += ex[now];
+                    }
+                    if best_eval.chmax(eval) {
+                        best_bit = bit;
+                    }
+                }
+                assert!(best_eval.is_some());
+                let best_bit = best_bit;
+                let mut ret = vec![];
+                let mut now = 0;
+                for i in 0..(used - 1) {
+                    now += 1;
+                    if ((best_bit >> i) & 1) != 0 {
+                        ret.push(now);
+                        now = 0;
+                    }
+                }
+                {
+                    now += 1;
+                    ret.push(now);
+                }
+                ret
+                /*
+                let mut best_eval = best_eval.unwrap();
+                let mut rand = XorShift64::new();
+                let mut best_g = vec![];
+                for _li in 0..10000 {
+                    let mut g = vec![vec![]; v];
+                    let mut d = vec![0; v];
+                    for i in 1..v {
+                        let pi = rand.next_usize() % i;
+                        g[pi].push(i);
+                        d[i] = d[pi] + 1;
+                    }
+                    let mut eval = 0.0;
+                    for i in 1..v {
+                        if !g[i].is_empty() {
+                            continue;
+                        }
+                        eval += ex[d[i]];
+                    }
+                    if best_eval.chmax(eval) {
+                        best_g = g;
+                    }
+                }
+                fn dfs(v: usize, g: &[Vec<usize>]) -> usize {
+                    let mut ret = 1;
+                    for &nv in g[v].iter() {
+                        ret += dfs(nv, g);
+                    }
+                    ret
+                }
+                let mut par = vec![0; v];
+                for i in 0..n {
+                    for &ni in best_g[i].iter() {
+                        par[ni] = i;
+                    }
+                }
+                return par;
+                */
+            }
         }
     }
     use arm_shape::ArmShape;
