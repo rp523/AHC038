@@ -5947,7 +5947,7 @@ mod solver {
                                 }
                                 // found
                                 *cap = !*cap;
-                                self.rem.remove(idx);
+                                self.rem.set(idx, false);
                                 *cost += reform.cost + 1;
                                 *dir = reform.dir;
                                 gain += 1;
@@ -5961,7 +5961,7 @@ mod solver {
                                 }
                                 // found
                                 *cap = !*cap;
-                                self.tgt.remove(idx);
+                                self.tgt.set(idx, false);
                                 *cost += reform.cost + 1;
                                 *dir = reform.dir;
                                 gain += 1;
@@ -6101,25 +6101,12 @@ mod solver {
                 }
                 cost
             }
-            pub fn gen(v: usize) -> (Vec<Self>, usize) {
-                let used = v;
-                println!("{used}");
-                let l_min = 1;
-                let arms = (l_min..v)
-                    .enumerate()
-                    .map(|(i, ln)| {
-                        let nxt_v = i + 1;
-                        Self::new(vec![ln as i32; 1], nxt_v)
-                    })
-                    .collect_vec();
-                for arm in arms.iter() {
-                    let mut p = 0;
-                    for (&l, &v) in arm.ls.iter().zip(arm.vs.iter()) {
-                        println!("{p} {l}");
-                        p = v;
-                    }
+            pub fn println(&self) {
+                let mut p = 0;
+                for (&l, &v) in self.ls.iter().zip(self.vs.iter()) {
+                    println!("{p} {l}");
+                    p = v;
                 }
-                (arms, used)
             }
         }
     }
@@ -6185,8 +6172,8 @@ mod solver {
             }
             for idx in 0..(n * n) {
                 if s.contains(idx) && t.contains(idx) {
-                    s.remove(idx);
-                    t.remove(idx);
+                    s.set(idx, false);
+                    t.set(idx, false);
                     m -= 1;
                 }
             }
@@ -6221,6 +6208,70 @@ mod solver {
             let y_ave = y_sum / (2 * self.m);
             let x_ave = x_sum / (2 * self.m);
             (y_ave, x_ave)
+        }
+        fn gen_arm_shapes(&self) -> (Vec<ArmShape>, usize) {
+            let mut ls = vec![];
+            let mut used = 1;
+            let mut max_sz = 0;
+            for sz in 1.. {
+                let nused = used + sz;
+                if nused > self.v {
+                    break;
+                }
+                used = nused;
+                ls.push(vec![1; sz]);
+                max_sz.chmax(sz);
+            }
+            let unit = self.n / max_sz;
+            debug_assert!(unit <= self.n);
+            ls.iter_mut().for_each(|ls| {
+                ls.iter_mut().for_each(|l| {
+                    *l = unit as i32;
+                })
+            });
+            {
+                let mut que = BinaryHeap::new();
+                for (i, ls) in ls.iter().cloned().enumerate() {
+                    que.push((ls[0], Reverse(i), ls));
+                }
+                while used < self.v {
+                    let Some((_, Reverse(i), ls0)) = que.pop() else {
+                        break;
+                    };
+                    let len0 = ls0.len();
+                    let sm = ls0.into_iter().sum::<i32>();
+                    let len1 = len0 + 1;
+                    let unit = sm / len1 as i32;
+                    if unit == 0 {
+                        continue;
+                    }
+                    let mut ls1 = vec![unit; len1];
+                    let rem = sm - unit * len1 as i32;
+                    for j in 0..rem as usize {
+                        ls1[j] += 1;
+                    }
+                    debug_assert!(ls1.iter().all(|&l| l > 0));
+                    debug_assert_eq!(sm, ls1.iter().sum::<i32>());
+                    ls[i] = ls1.clone();
+                    que.push((ls1[0], Reverse(i), ls1));
+                    used += 1;
+                }
+            }
+            let mut nxt_v = 1;
+            let arms = ls
+                .into_iter()
+                .map(|ls| {
+                    let ln = ls.len();
+                    let arm = ArmShape::new(ls, nxt_v);
+                    nxt_v += ln;
+                    arm
+                })
+                .collect_vec();
+            println!("{used}");
+            for arm in arms.iter() {
+                arm.println();
+            }
+            (arms, used)
         }
         fn add_cmd(
             &self,
@@ -6287,7 +6338,7 @@ mod solver {
                 .collect_vec()
         }
         pub fn solve(&self) {
-            let (arm_shapes, used) = ArmShape::gen(self.v);
+            let (arm_shapes, used) = self.gen_arm_shapes();
             let (mut y_now, mut x_now) = self.gen_ini();
             println!("{y_now} {x_now}");
 
