@@ -5941,6 +5941,8 @@ mod solver {
                             let mut reform_gain = 0;
                             let mut flips = vec![];
                             for &(rv, (dy, dx)) in reform.pts.iter() {
+                                debug_assert!(rv > 0);
+                                debug_assert!(arm_shape.g[rv].is_empty());
                                 if y as i32 + dy < 0
                                     || y as i32 + dy >= n as i32
                                     || x as i32 + dx < 0
@@ -5975,6 +5977,7 @@ mod solver {
                         if let Some((reform, flips)) = best_reform {
                             upd = true;
                             let mut flip = 0;
+                            debug_assert!(!flips.is_empty());
                             for (flip_rv, (y, x)) in flips {
                                 if ((*cap >> flip_rv) & 1) == 0 {
                                     debug_assert!(((self.rem[y] >> x) & 1) != 0);
@@ -5987,7 +5990,7 @@ mod solver {
                                 flip |= 1u16 << flip_rv;
                             }
                             *cap ^= flip;
-                            *arm_cost += reform.cost + 1;
+                            *arm_cost += max(1, reform.cost);
                             *dir = reform.dir;
                             gain += best_eval.0;
                             dir_upd.push((reform.dir, flip));
@@ -6539,28 +6542,25 @@ mod solver {
                 for &(dir1, flip) in dir_upd.iter() {
                     let (abs_vs, cs) = arm_shape.rot_cmd(dir, dir1);
                     let mut cmd_delta = 0;
-                    for (rel_v, (&abs_v, cs)) in
-                        abs_vs.iter().zip(cs.into_iter()).enumerate().skip(1)
-                    {
+                    for (&abs_v, cs) in abs_vs.iter().zip(cs.iter()).skip(1) {
                         let mut cmd_y_of_v = cmd_y;
                         let cmd_x = abs_v;
                         for &c in cs.iter() {
                             add(cmd_y_of_v, cmd_x, c);
                             cmd_y_of_v += 1;
                         }
-                        if ((flip >> rel_v) & 1) == 0 {
-                            cmd_delta.chmax(cs.len());
-                        } else {
-                            add(cmd_y_of_v, used + cmd_x, 'P');
-                            //cmd_y_of_v += 1;
-                            cmd_delta.chmax(cs.len() + 1);
+                        cmd_delta.chmax(cs.len());
+                    }
+                    for (rel_v, abs_v) in abs_vs.into_iter().enumerate().skip(1) {
+                        if ((flip >> rel_v) & 1) != 0 {
+                            add(cmd_y + cmd_delta.saturating_sub(1), used + abs_v, 'P');
                         }
                     }
 
                     //cmd_y_of_v += 1;
                     //
                     dir = dir1;
-                    cmd_y += cmd_delta;
+                    cmd_y += max(1, cmd_delta);
                 }
             }
             if cmd.is_empty() {
@@ -6584,13 +6584,11 @@ mod solver {
                 cap: vec![0; arm_shapes.len()],
             };
             let mut state = state0.clone();
-            eprintln!("{:?}", state);
             let (_dgain, dcost, dir_upd) = state.move_and_update(self.n, &arm_shapes, y_now, x_now);
             cum_cost += dcost;
             for cmd in self.add_cmd(&arm_shapes, used, &state0, &dir_upd, (0, 0)) {
                 ans.push(cmd);
             }
-            eprintln!("{:?}", state);
 
             let mut dp = vec![vec![State::empty(self.n, arm_shapes.len()); self.n]; self.n];
             dp[y_now][x_now] = state.clone();
