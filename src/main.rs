@@ -6088,10 +6088,7 @@ mod solver {
                     }
                     termintals
                 }
-                const MX: usize = 100;
-                let tot = 1usize << (2 * len);
                 let points = (0..(1 << (2 * len)))
-                    .step_by(max(1, tot / MX))
                     .map(|dir| (dir, dir_to_point(dir, &par, terminal)))
                     .collect_vec();
                 let reforms = points
@@ -6398,6 +6395,42 @@ mod solver {
             best_g
         }
         fn gen_tree(&self) -> Vec<Vec<(usize, i32)>> {
+            let mut ls = vec![];
+            let mut used = 1;
+            let mut max_sz = 0;
+            for sz in 1.. {
+                let nused = used + sz;
+                if nused > self.v {
+                    break;
+                }
+                used = nused;
+                ls.push(vec![1; sz]);
+                max_sz.chmax(sz);
+            }
+            let unit = (self.n / max_sz) as i32;
+            debug_assert!(unit <= self.n as i32);
+            ls.iter_mut().for_each(|ls| {
+                ls.iter_mut().for_each(|l| {
+                    *l = unit;
+                })
+            });
+            let mut nxt = 1;
+            let mut g = vec![vec![]; self.v];
+            let mut pres = vec![0; ls.len()];
+            for (i, ls) in ls.iter().enumerate() {
+                let mut pre = 0;
+                for &l in ls.iter() {
+                    g[pre].push((nxt, l));
+                    pres[i] = pre;
+                    pre = nxt;
+                    nxt += 1;
+                }
+            }
+            for (i, v1) in (nxt..self.v).enumerate() {
+                g[pres[i]].push((v1, max(1, unit / 2)));
+            }
+            return g;
+
             let g = self.gen_tree_shape();
             let nv0s = g[0].clone();
             fn get_depth(v0: usize, d0: usize, g: &[Vec<(usize, i32)>]) -> usize {
