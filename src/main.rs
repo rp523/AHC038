@@ -6008,6 +6008,7 @@ mod solver {
             }
         }
     }
+    use num::PrimInt;
     use state::State;
     mod arm_shape {
         use super::*;
@@ -6366,7 +6367,7 @@ mod solver {
                 }
                 ret
             }
-            let p = 0.5 * (self.m as f64 / (self.n * self.n) as f64);
+            let p = 0.3 * (self.m as f64 / (self.n * self.n) as f64);
             let q = 1.0 - p;
             let ex = (0..self.v)
                 .map(|depth| 1.0 - power(q, 4u64.pow(depth as u32)))
@@ -6375,7 +6376,7 @@ mod solver {
             let mut best_g = vec![];
             let mut best_eval = None;
             //while self.t0.elapsed().as_millis() < 750 {
-            for li in 0..100 {
+            while self.t0.elapsed().as_millis() < 750 {
                 let mut g = vec![vec![]; self.v];
                 let mut d = vec![0; self.v];
                 for i in 1..self.v {
@@ -6427,6 +6428,74 @@ mod solver {
                     for (v1, _) in g[v0].iter() {
                         que.push(*v1);
                     }
+                }
+            }
+            let mut rand = XorShift64::new();
+            let mut eval = None;
+            while self.t0.elapsed().as_millis() < 1500 {
+                let mut ng = g.clone();
+                ng.iter_mut().for_each(|ng| {
+                    ng.iter_mut().for_each(|(_, d)| {
+                        match rand.next_usize() % 3 {
+                            0 => {
+                                //
+                            }
+                            1 => {
+                                *d = min(self.n as i32 / 2, *d + 1);
+                            }
+                            2 => {
+                                *d = max(1, *d - 1);
+                            }
+                            _ => unreachable!(),
+                        }
+                    })
+                });
+                let sz = self.n;
+                let mut reach = vec![vec![0; sz]; sz];
+                for _ in 0..100 {
+                    let dir = rand.next_usize() % (1 << (ng.len() - 1));
+                    let mut que = vec![0];
+                    let mut pos = vec![(0i32, 0i32); ng.len()];
+                    while let Some(v0) = que.pop() {
+                        let (y0, x0) = pos[v0];
+                        if ng[v0].is_empty() {
+                            if y0 <= 0 || y0 >= sz as i32 || x0 < 0 || x0 >= sz as i32 {
+                                continue;
+                            }
+                            reach[y0 as usize][x0 as usize] |= 1u16 << v0;
+                        }
+                        for &(v1, d) in ng[v0].iter() {
+                            pos[v1] = match (dir >> (2 * (v1 - 1))) & 3 {
+                                LEFT => (y0, x0 - d),
+                                RIGHT => (y0, x0 + d),
+                                UPPER => (y0 - d, x0),
+                                LOWER => (y0 + d, x0),
+                                _ => unreachable!(),
+                            };
+                            que.push(v1);
+                        }
+                    }
+                }
+                let mut ors = 0;
+                for y in 0..=self.n / 2 {
+                    for x in 0..=self.n / 2 {
+                        ors |= reach[y][x];
+                    }
+                }
+                if ors != (1 << (ng.len() - 1)) - 1 {
+                    continue;
+                }
+                let eval1 = reach
+                    .into_iter()
+                    .map(|reach| {
+                        reach
+                            .into_iter()
+                            .filter(|reach| reach.count_ones() > 0)
+                            .count()
+                    })
+                    .sum::<usize>();
+                if eval.chmax(eval1) {
+                    g = ng;
                 }
             }
             g
@@ -6617,9 +6686,6 @@ mod solver {
                         }
                         let y1 = (y0 as i32 + dy) as usize;
                         let x1 = (x0 as i32 + dx) as usize;
-                        if (y0, x0, y1, x1) == (1, 1, 2, 1) {
-                            eprintln!();
-                        }
                         let mut nstate = dp[y0][x0].clone();
                         let (dgain, dcost, dir_upd) =
                             nstate.move_and_update(self.n, &arm_shapes, y1, x1);
