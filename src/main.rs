@@ -6000,34 +6000,6 @@ mod solver {
             len: usize,
         }
         impl ArmShape {
-            pub fn dir_to_point(dir: usize, g: &[Vec<(usize, i32)>]) -> (i32, i32) {
-                let mut dy = 0;
-                let mut dx = 0;
-                let mut que = vec![0];
-                while let Some(v0) = que.pop() {
-                    assert!(g[v0].len() <= 1); // line
-                    for &(v1, d) in g[v0].iter() {
-                        let dir = ArmShape::extract_dir1(dir, v1);
-                        match dir & 3 {
-                            RIGHT => {
-                                dx += d;
-                            }
-                            LEFT => {
-                                dx -= d;
-                            }
-                            UPPER => {
-                                dy -= d;
-                            }
-                            LOWER => {
-                                dy += d;
-                            }
-                            _ => unreachable!(),
-                        }
-                        que.push(v1);
-                    }
-                }
-                (dy, dx)
-            }
             pub fn new(sz: usize, v_next_root: usize, g0: &[Vec<(usize, i32)>]) -> Self {
                 let (g, abs_vs, len) = {
                     let mut g = vec![vec![]; sz];
@@ -6049,8 +6021,36 @@ mod solver {
                     }
                     (g, abs_vs, len)
                 };
+                fn dir_to_point(dir: usize, g: &[Vec<(usize, i32)>]) -> (i32, i32) {
+                    let mut dy = 0;
+                    let mut dx = 0;
+                    let mut que = vec![0];
+                    while let Some(v0) = que.pop() {
+                        assert!(g[v0].len() <= 1); // line
+                        for &(v1, d) in g[v0].iter() {
+                            let dir = ArmShape::extract_dir1(dir, v1);
+                            match dir & 3 {
+                                RIGHT => {
+                                    dx += d;
+                                }
+                                LEFT => {
+                                    dx -= d;
+                                }
+                                UPPER => {
+                                    dy -= d;
+                                }
+                                LOWER => {
+                                    dy += d;
+                                }
+                                _ => unreachable!(),
+                            }
+                            que.push(v1);
+                        }
+                    }
+                    (dy, dx)
+                }
                 let points = (0..(1 << (2 * len)))
-                    .map(|dir| Self::dir_to_point(dir, &g))
+                    .map(|dir| dir_to_point(dir, &g))
                     .collect_vec();
                 let move_to = (0..(1 << (2 * len)))
                     .map(|dir0| {
@@ -6149,6 +6149,100 @@ mod solver {
                         que.push(v1);
                     }
                 }
+            }
+            pub fn best_split(n: usize, m: usize, v: usize) -> Vec<usize> {
+                fn power(x: f64, mut p: u64) -> f64 {
+                    let mut ret = 1.0;
+                    let mut mul = x;
+                    while p > 0 {
+                        if (p & 1) != 0 {
+                            ret *= mul;
+                        }
+                        p >>= 1;
+                        mul = mul * mul;
+                    }
+                    ret
+                }
+                let p = 0.5 * (m as f64 / (n * n) as f64);
+                let q = 1.0 - p;
+                let used = v - 1;
+                let ex = (0..=used)
+                    .map(|now| 1.0 - power(q, 4u64.pow(now as u32)))
+                    .collect_vec();
+                let mut best_eval = None;
+                let mut best_bit = 0;
+                for bit in 0..(1 << (used - 1)) {
+                    let mut eval = 0.0;
+                    let mut now = 0;
+                    for i in 0..(used - 1) {
+                        now += 1;
+                        if ((bit >> i) & 1) != 0 {
+                            eval += ex[now];
+                            now = 0;
+                        }
+                    }
+                    {
+                        now += 1;
+                        eval += ex[now];
+                    }
+                    if best_eval.chmax(eval) {
+                        best_bit = bit;
+                    }
+                }
+                assert!(best_eval.is_some());
+                let best_bit = best_bit;
+                let mut ret = vec![];
+                let mut now = 0;
+                for i in 0..(used - 1) {
+                    now += 1;
+                    if ((best_bit >> i) & 1) != 0 {
+                        ret.push(now);
+                        now = 0;
+                    }
+                }
+                {
+                    now += 1;
+                    ret.push(now);
+                }
+                ret
+                /*
+                let mut best_eval = best_eval.unwrap();
+                let mut rand = XorShift64::new();
+                let mut best_g = vec![];
+                for _li in 0..10000 {
+                    let mut g = vec![vec![]; v];
+                    let mut d = vec![0; v];
+                    for i in 1..v {
+                        let pi = rand.next_usize() % i;
+                        g[pi].push(i);
+                        d[i] = d[pi] + 1;
+                    }
+                    let mut eval = 0.0;
+                    for i in 1..v {
+                        if !g[i].is_empty() {
+                            continue;
+                        }
+                        eval += ex[d[i]];
+                    }
+                    if best_eval.chmax(eval) {
+                        best_g = g;
+                    }
+                }
+                fn dfs(v: usize, g: &[Vec<usize>]) -> usize {
+                    let mut ret = 1;
+                    for &nv in g[v].iter() {
+                        ret += dfs(nv, g);
+                    }
+                    ret
+                }
+                let mut par = vec![0; v];
+                for i in 0..n {
+                    for &ni in best_g[i].iter() {
+                        par[ni] = i;
+                    }
+                }
+                return par;
+                */
             }
         }
     }
@@ -6251,101 +6345,54 @@ mod solver {
             let x_ave = x_sum / (2 * self.m);
             (y_ave, x_ave)
         }
-        fn best_split(&self) -> Vec<usize> {
-            fn power(x: f64, mut p: u64) -> f64 {
-                let mut ret = 1.0;
-                let mut mul = x;
-                while p > 0 {
-                    if (p & 1) != 0 {
-                        ret *= mul;
-                    }
-                    p >>= 1;
-                    mul = mul * mul;
+        fn gen_arm_shapes(&self) -> (Vec<ArmShape>, usize) {
+            let mut ls = vec![];
+            let mut used = 1;
+            let mut max_sz = 0;
+            for sz in 1.. {
+                let nused = used + sz;
+                if nused > self.v {
+                    break;
                 }
-                ret
+                used = nused;
+                ls.push(vec![1; sz]);
+                max_sz.chmax(sz);
             }
-            let p = 0.5 * (self.m as f64 / (self.n * self.n) as f64);
-            let q = 1.0 - p;
-            let used = self.v - 1;
-            let ex = (0..=used)
-                .map(|now| 1.0 - power(q, 4u64.pow(now as u32)))
-                .collect_vec();
-            let mut best_eval = None;
-            let mut best_bit = 0;
-            for bit in 0..(1 << (used - 1)) {
-                let mut eval = 0.0;
-                let mut now = 0;
-                for i in 0..(used - 1) {
-                    now += 1;
-                    if ((bit >> i) & 1) != 0 {
-                        eval += ex[now];
-                        now = 0;
-                    }
-                }
-                {
-                    now += 1;
-                    eval += ex[now];
-                }
-                if best_eval.chmax(eval) {
-                    best_bit = bit;
-                }
-            }
-            assert!(best_eval.is_some());
-            let best_bit = best_bit;
-            let mut ret = vec![];
-            let mut now = 0;
-            for i in 0..(used - 1) {
-                now += 1;
-                if ((best_bit >> i) & 1) != 0 {
-                    ret.push(now);
-                    now = 0;
-                }
-            }
+            let unit = self.n / max_sz;
+            debug_assert!(unit <= self.n);
+            ls.iter_mut().for_each(|ls| {
+                ls.iter_mut().for_each(|l| {
+                    *l = unit as i32;
+                })
+            });
             {
-                now += 1;
-                ret.push(now);
-            }
-            ret
-            /*
-            let mut best_eval = best_eval.unwrap();
-            let mut rand = XorShift64::new();
-            let mut best_g = vec![];
-            for _li in 0..10000 {
-                let mut g = vec![vec![]; v];
-                let mut d = vec![0; v];
-                for i in 1..v {
-                    let pi = rand.next_usize() % i;
-                    g[pi].push(i);
-                    d[i] = d[pi] + 1;
+                let mut que = BinaryHeap::new();
+                for (i, ls) in ls.iter().cloned().enumerate() {
+                    que.push((ls[0], Reverse(i), ls));
                 }
-                let mut eval = 0.0;
-                for i in 1..v {
-                    if !g[i].is_empty() {
+                while used < self.v {
+                    let Some((_, Reverse(i), ls0)) = que.pop() else {
+                        break;
+                    };
+                    let len0 = ls0.len();
+                    let sm = ls0.into_iter().sum::<i32>();
+                    let len1 = len0 + 1;
+                    let unit = sm / len1 as i32;
+                    if unit == 0 {
                         continue;
                     }
-                    eval += ex[d[i]];
-                }
-                if best_eval.chmax(eval) {
-                    best_g = g;
-                }
-            }
-            fn dfs(v: usize, g: &[Vec<usize>]) -> usize {
-                let mut ret = 1;
-                for &nv in g[v].iter() {
-                    ret += dfs(nv, g);
-                }
-                ret
-            }
-            let mut par = vec![0; v];
-            for i in 0..n {
-                for &ni in best_g[i].iter() {
-                    par[ni] = i;
+                    let mut ls1 = vec![unit; len1];
+                    let rem = sm - unit * len1 as i32;
+                    for j in 0..rem as usize {
+                        ls1[j] += 1;
+                    }
+                    debug_assert!(ls1.iter().all(|&l| l > 0));
+                    debug_assert_eq!(sm, ls1.iter().sum::<i32>());
+                    ls[i] = ls1.clone();
+                    que.push((ls1[0], Reverse(i), ls1));
+                    used += 1;
                 }
             }
-            return par;
-            */
-        }
-        fn ls_to_arms(&self, ls: &[Vec<i32>]) -> Vec<ArmShape> {
             let mut g = vec![vec![]; self.v];
             let mut nxt = 0;
             for ls in ls {
@@ -6355,84 +6402,12 @@ mod solver {
                 }
                 nxt += ls.len();
             }
-            let g = g;
-            g[0].iter()
+            let arms = g[0]
+                .iter()
                 .map(|&(nv0, _)| ArmShape::new(self.v, nv0, &g))
-                .collect_vec()
-        }
-        fn eval_ls(&self, mx: usize, ls: &[Vec<i32>]) -> Option<(usize, i32)> {
-            let arms = self.ls_to_arms(&ls);
-            let mut reach = vec![vec![0u16; mx + 1]; mx + 1];
-            for (ai, arm) in arms.iter().enumerate() {
-                let mut ok = false;
-                for reform in arm.reforms(0) {
-                    if reform.dy <= 0
-                        || reform.dy > mx as i32
-                        || reform.dx < 0
-                        || reform.dx > mx as i32
-                    {
-                        continue;
-                    }
-                    if reform.dy <= self.n as i32 / 2 && reform.dx <= self.n as i32 / 2 {
-                        ok = true;
-                    }
-                    reach[reform.dy as usize][reform.dx as usize] |= 1 << ai;
-                }
-                if !ok {
-                    return None;
-                }
-            }
-            let eval0 = reach
-                .into_iter()
-                .map(|reach| reach.into_iter().filter(|f| f.count_ones() >= 1).count())
-                .sum::<usize>();
-            let &eval1 = ls.iter().map(|ls| ls.iter().min().unwrap()).min().unwrap();
-            Some((eval0, eval1))
-        }
-        fn brush_up_lens(&self, ls0: Vec<Vec<i32>>) -> Vec<ArmShape> {
-            let mx = self.n - 1;
-            let mut rand = XorShift64::new();
-            let mut best_ls = ls0;
-            let mut best_eval = None;
-            let mut tri = 0;
-            let mut upd = 0;
-            while self.t0.elapsed().as_millis() < 1000 {
-                tri += 1;
-                let ls = best_ls
-                    .iter()
-                    .map(|ls| {
-                        ls.iter()
-                            .map(|&l| match rand.next_usize() % 3 {
-                                0 => l,
-                                1 => min(l + 1, mx as i32),
-                                2 => max(l - 1, 1),
-                                _ => unreachable!(),
-                            })
-                            .collect_vec()
-                    })
-                    .collect_vec();
-                let Some(eval) = self.eval_ls(mx, &ls) else {
-                    upd += 1;
-                    continue;
-                };
-                if best_eval.chmax(eval) {
-                    best_ls = ls;
-                }
-            }
-            if false {
-                eprintln!("length: ({upd}/{tri})");
-            }
-            self.ls_to_arms(&best_ls)
-        }
-        fn gen_arm_shapes(&self) -> (Vec<ArmShape>, usize) {
-            let ls0 = self
-                .best_split()
-                .into_iter()
-                .map(|sz| vec![(self.n / 2 / sz) as i32; sz])
                 .collect_vec();
-            let arms = self.brush_up_lens(ls0);
             println!("{}", self.v);
-            let mut shape = vec![(0, 0); self.v];
+            let mut shape = vec![(0, 0); used];
             for arm in arms.iter() {
                 arm.set_shape(&mut shape);
             }
