@@ -5948,7 +5948,7 @@ mod solver {
                                 // found
                                 *cap = !*cap;
                                 self.rem.set(idx, false);
-                                *cost += reform.cost + 1;
+                                *cost += max(1, reform.cost);
                                 *dir = reform.dir;
                                 gain += 1;
                                 upd = true;
@@ -5962,7 +5962,7 @@ mod solver {
                                 // found
                                 *cap = !*cap;
                                 self.tgt.set(idx, false);
-                                *cost += reform.cost + 1;
+                                *cost += max(1, reform.cost);
                                 *dir = reform.dir;
                                 gain += 1;
                                 upd = true;
@@ -6426,7 +6426,7 @@ mod solver {
         ) -> Vec<String> {
             let mut cmd = vec![];
             let mut add = |cy: usize, cx: usize, c: char| {
-                if cmd.len() <= cy {
+                while cmd.len() <= cy {
                     cmd.push(vec!['.'; 2 * used]);
                 }
                 cmd[cy][cx] = c;
@@ -6462,18 +6462,16 @@ mod solver {
                         }
                         cmd_delta.chmax(cs.len());
                     }
-                    // todo for tree
-                    let mut rel_end = 0;
-                    while !arm_shape.g[rel_end].is_empty() {
-                        rel_end = arm_shape.g[rel_end][0].0;
-                    }
-                    let abs_end = arm_shape.abs_vs[rel_end];
+                    add(
+                        cmd_y + cmd_delta.saturating_sub(1),
+                        used + abs_vs[abs_vs.len() - 1],
+                        'P',
+                    );
 
-                    add(cmd_y + cmd_delta, used + abs_end, 'P');
                     //cmd_y_of_v += 1;
                     //
                     dir = dir1;
-                    cmd_y += cmd_delta + 1;
+                    cmd_y += max(1, cmd_delta);
                 }
             }
             if cmd.is_empty() {
