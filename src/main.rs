@@ -6084,7 +6084,7 @@ mod solver {
             }
             #[inline(always)]
             pub fn rot_cmd(&self, dir0: usize, dir1: usize) -> (&[usize], Vec<Vec<char>>) {
-                let mut cmd = vec![vec![]; self.len()];
+                let mut cmd = vec![vec![]; 1 + self.len()];
                 let mut que = vec![0];
                 while let Some(v0) = que.pop() {
                     for &(v1, _) in self.g[v0].iter() {
@@ -6099,7 +6099,7 @@ mod solver {
                         };
                         let d1 = Self::extract_dir1(dir1, v1);
                         let t = (d1 + 4 - d0) % 4;
-                        cmd[v1 - 1] = match t {
+                        cmd[v1] = match t {
                             0 => vec![],
                             1 => vec!['L'],
                             2 => vec!['R'; 2],
@@ -6453,7 +6453,7 @@ mod solver {
                 for &dir1 in dir_upd.iter() {
                     let (abs_vs, cs) = arm_shape.rot_cmd(dir, dir1);
                     let mut cmd_delta = 0;
-                    for (&abs_v, cs) in abs_vs.iter().skip(1).zip(cs.into_iter()) {
+                    for (&abs_v, cs) in abs_vs.iter().zip(cs.into_iter()).skip(1) {
                         let mut cmd_y_of_v = cmd_y;
                         let cmd_x = abs_v;
                         for &c in cs.iter() {
