@@ -5994,44 +5994,70 @@ mod solver {
             pub dir: usize,
         }
         pub struct ArmShape {
-            ls: Vec<i32>,
-            point_to_dir: Vec<Vec<Reform>>,
-            vs: Vec<usize>,
+            move_to: Vec<Vec<Reform>>,
+            pub g: Vec<Vec<(usize, i32)>>,
+            pub abs_vs: Vec<usize>,
+            len: usize,
         }
         impl ArmShape {
-            pub fn new(ls: Vec<i32>, nxt_v: usize) -> Self {
-                fn dir_to_point(mut dir: usize, ls: &[i32]) -> (i32, i32) {
+            pub fn new(sz: usize, v_next_root: usize, g0: &[Vec<(usize, i32)>]) -> Self {
+                let (g, abs_vs, len) = {
+                    let mut g = vec![vec![]; sz];
+                    let mut len = 0;
+                    let mut abs_vs = vec![0];
+                    let mut abs_vs_rev = vec![0; sz];
+                    let mut que = vec![0];
+                    while let Some(abs_v0) = que.pop() {
+                        for &(abs_v1, d) in g0[abs_v0].iter() {
+                            if (abs_v0 == 0) && (abs_v1 != v_next_root) {
+                                continue;
+                            }
+                            len += 1;
+                            g[abs_vs_rev[abs_v0]].push((len, d));
+                            que.push(abs_v1);
+                            abs_vs.push(abs_v1);
+                            abs_vs_rev[abs_v1] = len;
+                        }
+                    }
+                    (g, abs_vs, len)
+                };
+                fn dir_to_point(dir: usize, g: &[Vec<(usize, i32)>]) -> (i32, i32) {
                     let mut dy = 0;
                     let mut dx = 0;
-                    for &l in ls.iter() {
-                        match dir & 3 {
-                            RIGHT => {
-                                dx += l;
+                    let mut que = vec![0];
+                    while let Some(v0) = que.pop() {
+                        assert!(g[v0].len() <= 1); // line
+                        for &(v1, d) in g[v0].iter() {
+                            let dir = ArmShape::extract_dir1(dir, v1);
+                            match dir & 3 {
+                                RIGHT => {
+                                    dx += d;
+                                }
+                                LEFT => {
+                                    dx -= d;
+                                }
+                                UPPER => {
+                                    dy -= d;
+                                }
+                                LOWER => {
+                                    dy += d;
+                                }
+                                _ => unreachable!(),
                             }
-                            LEFT => {
-                                dx -= l;
-                            }
-                            UPPER => {
-                                dy -= l;
-                            }
-                            LOWER => {
-                                dy += l;
-                            }
-                            _ => unreachable!(),
+                            que.push(v1);
                         }
-                        dir >>= 2;
                     }
                     (dy, dx)
                 }
-                let points = (0..(1 << (2 * ls.len())))
-                    .map(|dir| dir_to_point(dir, &ls))
+                let points = (0..(1 << (2 * len)))
+                    .map(|dir| dir_to_point(dir, &g))
                     .collect_vec();
-                let point_to_dir = (0..(1 << (2 * ls.len())))
+                let move_to = (0..(1 << (2 * len)))
                     .map(|dir0| {
                         let mut point_to_dir = Map::new();
                         const INF: usize = 1usize << 60;
                         for (dir1, &(dy1, dx1)) in points.iter().enumerate() {
-                            let cost = Self::rot_cost(ls.len(), dir0, dir1);
+                            let cost = Self::rot_cost(&g, dir0, dir1);
                             point_to_dir
                                 .entry((dy1, dx1))
                                 .or_insert((INF, 0))
@@ -6045,67 +6071,83 @@ mod solver {
                         point_to_dir
                     })
                     .collect_vec();
-                let vs = (nxt_v..).take(ls.len()).collect_vec();
                 Self {
-                    ls,
-                    point_to_dir,
-                    vs,
+                    move_to,
+                    g,
+                    abs_vs,
+                    len,
                 }
             }
             #[inline(always)]
-            pub fn rot_cmd(
-                &self,
-                cmd_base: &[Vec<Vec<char>>],
-                dir0: usize,
-                dir1: usize,
-            ) -> Vec<Vec<char>> {
+            fn extract_dir1(dirs: usize, v: usize) -> usize {
+                (dirs >> (2 * (v - 1))) & 3
+            }
+            #[inline(always)]
+            pub fn rot_cmd(&self, dir0: usize, dir1: usize) -> (&[usize], Vec<Vec<char>>) {
                 let mut cmd = vec![vec![]; self.len()];
-                for i in 0..self.len() {
-                    let d0 = if i == 0 {
-                        (dir0 >> (2 * i)) & 3
-                    } else {
-                        let pd0 = (dir0 >> (2 * (i - 1))) & 3;
-                        let nd0 = (dir0 >> (2 * i)) & 3;
-                        let del0 = (nd0 + 4 - pd0) % 4;
-                        let pd1 = (dir1 >> (2 * (i - 1))) & 3;
-                        (pd1 + del0) % 4
-                    };
-                    let d1 = (dir1 >> (2 * i)) & 3;
-                    cmd[i] = cmd_base[d0][d1].clone();
+                let mut que = vec![0];
+                while let Some(v0) = que.pop() {
+                    for &(v1, _) in self.g[v0].iter() {
+                        let d0 = if v0 == 0 {
+                            dir0 & 3
+                        } else {
+                            let pd0 = Self::extract_dir1(dir0, v0);
+                            let nd0 = Self::extract_dir1(dir0, v1);
+                            let del0 = (nd0 + 4 - pd0) % 4;
+                            let pd1 = Self::extract_dir1(dir1, v0);
+                            (pd1 + del0) % 4
+                        };
+                        let d1 = Self::extract_dir1(dir1, v1);
+                        let t = (d1 + 4 - d0) % 4;
+                        cmd[v1 - 1] = match t {
+                            0 => vec![],
+                            1 => vec!['L'],
+                            2 => vec!['R'; 2],
+                            3 => vec!['R'],
+                            _ => unreachable!(),
+                        };
+                        que.push(v1);
+                    }
                 }
-                cmd
+                (&self.abs_vs, cmd)
             }
             #[inline(always)]
             pub fn len(&self) -> usize {
-                self.ls.len()
+                self.len
             }
             #[inline(always)]
             pub fn reforms(&self, dir: usize) -> &[Reform] {
-                &self.point_to_dir[dir]
+                &self.move_to[dir]
             }
-            #[inline(always)]
-            pub fn rot_cost(ln: usize, dir0: usize, dir1: usize) -> usize {
+            //#[inline(always)]
+            pub fn rot_cost(g: &[Vec<(usize, i32)>], dir0: usize, dir1: usize) -> usize {
                 let mut cost = 0;
-                for i in 0..ln {
-                    let d0 = if i == 0 {
-                        (dir0 >> (2 * i)) & 3
-                    } else {
-                        let pd0 = (dir0 >> (2 * (i - 1))) & 3;
-                        let nd0 = (dir0 >> (2 * i)) & 3;
-                        let del0 = (nd0 + 4 - pd0) % 4;
-                        let pd1 = (dir1 >> (2 * (i - 1))) & 3;
-                        (pd1 + del0) % 4
-                    };
-                    let d1 = (dir1 >> (2 * i)) & 3;
-                    cost.chmax(ROT[d0][d1]);
+                let mut que = vec![0];
+                while let Some(v0) = que.pop() {
+                    for &(v1, _) in g[v0].iter() {
+                        let d0 = if v0 == 0 {
+                            dir0 & 3
+                        } else {
+                            let pd0 = Self::extract_dir1(dir0, v0);
+                            let nd0 = Self::extract_dir1(dir0, v1);
+                            let del0 = (nd0 + 4 - pd0) % 4;
+                            let pd1 = Self::extract_dir1(dir1, v0);
+                            (pd1 + del0) % 4
+                        };
+                        let d1 = Self::extract_dir1(dir1, v1);
+                        cost.chmax(ROT[d0][d1]);
+                        que.push(v1);
+                    }
                 }
                 cost
             }
-            pub fn println(&self) {
-                let mut p = 0;
-                for (&l, &v) in self.ls.iter().zip(self.vs.iter()) {
-                    println!("{p} {l}");
-                    p = v;
+            pub fn set_shape(&self, shape: &mut [(usize, i32)]) {
+                let mut que = vec![0];
+                while let Some(v0) = que.pop() {
+                    for &(v1, d) in self.g[v0].iter() {
+                        shape[self.abs_vs[v1]] = (self.abs_vs[v0], d);
+                        que.push(v1);
+                    }
                 }
             }
             pub fn best_split(n: usize, m: usize, v: usize) -> Vec<usize> {
@@ -6351,21 +6393,28 @@ mod solver {
                     used += 1;
                 }
             }
-            let mut nxt_v = 1;
-            let arms = ls
-                .into_iter()
-                .map(|ls| {
-                    let ln = ls.len();
-                    let arm = ArmShape::new(ls, nxt_v);
-                    nxt_v += ln;
-                    arm
-                })
-                .collect_vec();
-            println!("{used}");
-            for arm in arms.iter() {
-                arm.println();
+            let mut g = vec![vec![]; self.v];
+            let mut nxt = 0;
+            for ls in ls {
+                for (i, d) in ls.iter().copied().enumerate() {
+                    let from = if i == 0 { 0 } else { nxt + i };
+                    g[from].push((nxt + i + 1, d));
+                }
+                nxt += ls.len();
             }
-            (arms, used)
+            let arms = g[0]
+                .iter()
+                .map(|&(nv0, _)| ArmShape::new(self.v, nv0, &g))
+                .collect_vec();
+            println!("{}", self.v);
+            let mut shape = vec![(0, 0); used];
+            for arm in arms.iter() {
+                arm.set_shape(&mut shape);
+            }
+            for (p, d) in shape.into_iter().skip(1) {
+                println!("{p} {d}");
+            }
+            (arms, self.v)
         }
         fn add_cmd(
             &self,
@@ -6394,8 +6443,6 @@ mod solver {
                     _ => unreachable!(),
                 },
             );
-            let mut arm_idx0 = 1;
-            let mut arm_idx1 = used + 1;
             for (arm_shape, (&dir0, dir_upd)) in
                 arm_shapes.iter().zip(state.dir.iter().zip(dir_upd.iter()))
             {
@@ -6404,25 +6451,30 @@ mod solver {
                 // repeao
                 let mut cmd_y = 0;
                 for &dir1 in dir_upd.iter() {
-                    let v_cs = arm_shape.rot_cmd(&self.cmd_base, dir, dir1);
+                    let (abs_vs, cs) = arm_shape.rot_cmd(dir, dir1);
                     let mut cmd_delta = 0;
-                    for (v, cs) in v_cs.into_iter().enumerate() {
+                    for (&abs_v, cs) in abs_vs.iter().skip(1).zip(cs.into_iter()) {
                         let mut cmd_y_of_v = cmd_y;
-                        let cmd_x = arm_idx0 + v;
+                        let cmd_x = abs_v;
                         for &c in cs.iter() {
                             add(cmd_y_of_v, cmd_x, c);
                             cmd_y_of_v += 1;
                         }
                         cmd_delta.chmax(cs.len());
                     }
-                    add(cmd_y + cmd_delta, arm_idx1 + arm_shape.len() - 1, 'P');
+                    // todo for tree
+                    let mut rel_end = 0;
+                    while !arm_shape.g[rel_end].is_empty() {
+                        rel_end = arm_shape.g[rel_end][0].0;
+                    }
+                    let abs_end = arm_shape.abs_vs[rel_end];
+
+                    add(cmd_y + cmd_delta, used + abs_end, 'P');
                     //cmd_y_of_v += 1;
                     //
                     dir = dir1;
                     cmd_y += cmd_delta + 1;
                 }
-                arm_idx0 += arm_shape.len();
-                arm_idx1 += arm_shape.len();
             }
             if cmd.is_empty() {
                 cmd.push(vec!['.'; 2 * used]);
