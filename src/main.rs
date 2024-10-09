@@ -5896,7 +5896,7 @@ mod solver {
             pub rem: FixedBitSet,
             pub tgt: FixedBitSet,
             pub dir: Vec<usize>,
-            pub cap: Vec<bool>,
+            pub cap: Vec<u16>,
         }
         impl State {
             pub fn empty(n: usize, arm_num: usize) -> Self {
@@ -5904,11 +5904,11 @@ mod solver {
                     rem: FixedBitSet::with_capacity(n * n),
                     tgt: FixedBitSet::with_capacity(n * n),
                     dir: vec![0; arm_num],
-                    cap: vec![false; arm_num],
+                    cap: vec![0; arm_num],
                 }
             }
             pub fn fin(&self) -> bool {
-                self.rem.is_clear() && self.tgt.is_clear() && self.cap.iter().all(|&x| !x)
+                self.rem.is_clear() && self.tgt.is_clear() && self.cap.iter().all(|&x| x == 0)
             }
             pub fn move_and_update(
                 &mut self,
@@ -5923,51 +5923,60 @@ mod solver {
                 loop {
                     let mut upd = false;
                     // arm loop
-                    for (((cost, dir), (arm_shape, cap)), dir_upd) in rot_and_caprel_cost
+                    for (((arm_cost, dir), (arm_shape, cap)), dir_upd) in rot_and_caprel_cost
                         .iter_mut()
                         .zip(self.dir.iter_mut())
                         .zip(arm_shapes.iter().zip(self.cap.iter_mut()))
                         .zip(dir_upd.iter_mut())
                     {
-                        for &reform in arm_shape.reforms(*dir) {
-                            if y as i32 + reform.dy < 0
-                                || y as i32 + reform.dy >= n as i32
-                                || x as i32 + reform.dx < 0
-                                || x as i32 + reform.dx >= n as i32
-                            {
-                                continue;
+                        // one arm
+                        let mut best_eval = (0, Reverse(0));
+                        let mut best_reform = None;
+                        // one arm
+                        for reform in arm_shape.reforms(*dir) {
+                            let mut reform_gain = 0;
+                            let mut flips = vec![];
+                            for &(rv, (dy, dx)) in reform.pts.iter() {
+                                if y as i32 + dy < 0
+                                    || y as i32 + dy >= n as i32
+                                    || x as i32 + dx < 0
+                                    || x as i32 + dx >= n as i32
+                                {
+                                    continue;
+                                }
+                                let ny = (y as i32 + dy) as usize;
+                                let nx = (x as i32 + dx) as usize;
+                                let idx = ny * n + nx;
+                                if (((*cap >> rv) & 1) == 0) && self.rem.contains(idx) {
+                                    // capture.
+                                    reform_gain += 1;
+                                    flips.push((rv, idx));
+                                } else if (((*cap >> rv) & 1) != 0) && self.tgt.contains(idx) {
+                                    // release
+                                    reform_gain += 1;
+                                    flips.push((rv, idx));
+                                }
                             }
-                            let ny = (y as i32 + reform.dy) as usize;
-                            let nx = (x as i32 + reform.dx) as usize;
-                            let idx = ny * n + nx;
-                            if !*cap {
-                                // may capture
-                                if !self.rem.contains(idx) {
-                                    continue;
+                            if best_eval.chmax((reform_gain, Reverse(reform.cost))) {
+                                best_reform = Some((reform, flips));
+                            }
+                        }
+                        if let Some((reform, flips)) = best_reform {
+                            upd = true;
+                            for (flip_rv, idx) in flips {
+                                if ((*cap >> flip_rv) & 1) == 0 {
+                                    debug_assert!(self.rem.contains(idx));
+                                    self.rem.set(idx, false);
+                                } else {
+                                    debug_assert!(((*cap >> flip_rv) & 1) == 1);
+                                    debug_assert!(self.tgt.contains(idx));
+                                    self.tgt.set(idx, false);
                                 }
-                                // found
-                                *cap = !*cap;
-                                self.rem.set(idx, false);
-                                *cost += reform.cost + 1;
+                                *cap ^= 1u16 << flip_rv;
+                                *arm_cost += reform.cost + 1;
                                 *dir = reform.dir;
-                                gain += 1;
-                                upd = true;
-                                dir_upd.push(*dir);
-                                break;
-                            } else {
-                                // may release
-                                if !self.tgt.contains(idx) {
-                                    continue;
-                                }
-                                // found
-                                *cap = !*cap;
-                                self.tgt.set(idx, false);
-                                *cost += reform.cost + 1;
-                                *dir = reform.dir;
-                                gain += 1;
-                                upd = true;
-                                dir_upd.push(*dir);
-                                break;
+                                gain += best_eval.0;
+                                dir_upd.push(reform.dir);
                             }
                         }
                     }
@@ -5986,95 +5995,107 @@ mod solver {
     use state::State;
     mod arm_shape {
         use super::*;
-        #[derive(Clone, Copy, Debug, PartialEq)]
+        #[derive(Clone, Debug, PartialEq)]
         pub struct Reform {
-            pub dy: i32,
-            pub dx: i32,
+            pub pts: Vec<(usize, (i32, i32))>,
             pub cost: usize,
             pub dir: usize,
         }
         pub struct ArmShape {
-            move_to: Vec<Vec<Reform>>,
+            reforms: Vec<Vec<Reform>>,
             pub g: Vec<Vec<(usize, i32)>>,
+            pub par: Vec<(usize, i32)>,
             pub abs_vs: Vec<usize>,
+            terminal: u16,
             len: usize,
         }
         impl ArmShape {
             pub fn new(sz: usize, v_next_root: usize, g0: &[Vec<(usize, i32)>]) -> Self {
-                let (g, abs_vs, len) = {
+                let (g, par, abs_vs, terminal, len) = {
                     let mut g = vec![vec![]; sz];
+                    let mut par = vec![(0, 0)];
+                    let mut terminal = 0;
                     let mut len = 0;
                     let mut abs_vs = vec![0];
                     let mut abs_vs_rev = vec![0; sz];
                     let mut que = vec![0];
                     while let Some(abs_v0) = que.pop() {
+                        let v0 = abs_vs_rev[abs_v0];
+                        if g0[abs_v0].is_empty() {
+                            terminal |= 1u16 << v0;
+                        }
                         for &(abs_v1, d) in g0[abs_v0].iter() {
                             if (abs_v0 == 0) && (abs_v1 != v_next_root) {
                                 continue;
                             }
                             len += 1;
-                            g[abs_vs_rev[abs_v0]].push((len, d));
+                            debug_assert_eq!(len, par.len());
+                            par.push((v0, d));
+                            g[v0].push((len, d));
                             que.push(abs_v1);
                             abs_vs.push(abs_v1);
                             abs_vs_rev[abs_v1] = len;
                         }
                     }
-                    (g, abs_vs, len)
+                    (g, par, abs_vs, terminal, len)
                 };
-                fn dir_to_point(dir: usize, g: &[Vec<(usize, i32)>]) -> (i32, i32) {
-                    let mut dy = 0;
-                    let mut dx = 0;
-                    let mut que = vec![0];
-                    while let Some(v0) = que.pop() {
-                        assert!(g[v0].len() <= 1); // line
-                        for &(v1, d) in g[v0].iter() {
-                            let dir = ArmShape::extract_dir1(dir, v1);
-                            match dir & 3 {
-                                RIGHT => {
-                                    dx += d;
-                                }
-                                LEFT => {
-                                    dx -= d;
-                                }
-                                UPPER => {
-                                    dy -= d;
-                                }
-                                LOWER => {
-                                    dy += d;
-                                }
-                                _ => unreachable!(),
+                fn dir_to_point(
+                    dir: usize,
+                    par: &[(usize, i32)],
+                    terminal: u16,
+                ) -> Vec<(usize, (i32, i32))> {
+                    let mut termintals = vec![];
+                    let mut pos = vec![(0, 0); par.len()];
+                    for (v1, &(v0, d)) in par.iter().enumerate().skip(1) {
+                        let dir = ArmShape::extract_dir1(dir, v1);
+                        let (mut y, mut x) = pos[v0];
+                        match dir {
+                            RIGHT => {
+                                x += d;
                             }
-                            que.push(v1);
+                            LEFT => {
+                                x -= d;
+                            }
+                            UPPER => {
+                                y -= d;
+                            }
+                            LOWER => {
+                                y += d;
+                            }
+                            _ => unreachable!(),
+                        }
+                        pos[v1] = (y, x);
+                        if ((terminal >> v1) & 1) != 0 {
+                            termintals.push((v1, pos[v1]));
                         }
                     }
-                    (dy, dx)
+                    termintals
                 }
                 let points = (0..(1 << (2 * len)))
-                    .map(|dir| dir_to_point(dir, &g))
+                    .map(|dir| dir_to_point(dir, &par, terminal))
                     .collect_vec();
-                let move_to = (0..(1 << (2 * len)))
+                let reforms = (0..points.len())
                     .map(|dir0| {
-                        let mut point_to_dir = Map::new();
-                        const INF: usize = 1usize << 60;
-                        for (dir1, &(dy1, dx1)) in points.iter().enumerate() {
-                            let cost = Self::rot_cost(&g, dir0, dir1);
-                            point_to_dir
-                                .entry((dy1, dx1))
-                                .or_insert((INF, 0))
-                                .chmin((cost, dir1));
-                        }
-                        let mut point_to_dir = point_to_dir
-                            .into_iter()
-                            .map(|((dy, dx), (cost, dir))| Reform { dy, dx, cost, dir })
-                            .collect_vec();
-                        point_to_dir.sort_by_cached_key(|reform| reform.cost);
-                        point_to_dir
+                        points
+                            .iter()
+                            .enumerate()
+                            .map(|(dir, pts)| {
+                                let cost = Self::rot_cost(&g, dir0, dir);
+                                Reform {
+                                    pts: pts.clone(),
+                                    cost,
+                                    dir,
+                                }
+                            })
+                            .collect_vec()
                     })
                     .collect_vec();
                 Self {
-                    move_to,
+                    reforms,
                     g,
+                    par,
                     abs_vs,
+                    terminal,
                     len,
                 }
             }
@@ -6117,7 +6138,7 @@ mod solver {
             }
             #[inline(always)]
             pub fn reforms(&self, dir: usize) -> &[Reform] {
-                &self.move_to[dir]
+                &self.reforms[dir]
             }
             //#[inline(always)]
             pub fn rot_cost(g: &[Vec<(usize, i32)>], dir0: usize, dir1: usize) -> usize {
@@ -6142,12 +6163,9 @@ mod solver {
                 cost
             }
             pub fn set_shape(&self, shape: &mut [(usize, i32)]) {
-                let mut que = vec![0];
-                while let Some(v0) = que.pop() {
-                    for &(v1, d) in self.g[v0].iter() {
-                        shape[self.abs_vs[v1]] = (self.abs_vs[v0], d);
-                        que.push(v1);
-                    }
+                for v1 in 1..self.par.len() {
+                    let (v0, d) = self.par[v1];
+                    shape[self.abs_vs[v1]] = (self.abs_vs[v0], d);
                 }
             }
             pub fn best_split(n: usize, m: usize, v: usize) -> Vec<usize> {
@@ -6494,7 +6512,7 @@ mod solver {
                 rem: self.s.clone(),
                 tgt: self.t.clone(),
                 dir: vec![0; arm_shapes.len()],
-                cap: vec![false; arm_shapes.len()],
+                cap: vec![0; arm_shapes.len()],
             };
             let mut state = state0.clone();
             let (_dgain, dcost, dir_upd) = state.move_and_update(self.n, &arm_shapes, y_now, x_now);
