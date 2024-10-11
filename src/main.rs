@@ -6183,14 +6183,88 @@ mod solver {
                 }
                 ret
             }
+            fn evaluate(
+                n: usize,
+                p: f64,
+                ls: &[Vec<i32>],
+                to: &mut [Vec<u64>],
+                to_cnt: &mut u64,
+                to1: &mut [Vec<u64>],
+                to1_cnt: &mut u64,
+            ) -> (f64, i32, i32) {
+                let q = 1.0 - p * 0.5;
+                *to_cnt += 1;
+                let mut eval0 = 0.0;
+                let mut eval1 = 0;
+                for ls in ls {
+                    *to1_cnt += 1;
+                    let mut pw = 0;
+                    for dir in 0..(1 << (2 * ls.len())) {
+                        let (mut y, mut x) = (0, 0);
+                        for (i, &l) in ls.iter().enumerate() {
+                            match (dir >> (2 * i)) & 3 {
+                                0 => {
+                                    x += l;
+                                }
+                                1 => {
+                                    x -= l;
+                                }
+                                2 => {
+                                    y -= l;
+                                }
+                                3 => {
+                                    y += l;
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        if y <= 0 as i32 || x < 0 {
+                            continue;
+                        }
+                        if y >= n as i32 || x >= n as i32 {
+                            continue;
+                        }
+                        if to[y as usize][x as usize].chmax(*to_cnt) {
+                            eval1 += 1;
+                        }
+                        if to1[y as usize][x as usize].chmax(*to1_cnt) {
+                            pw += 1;
+                        }
+                    }
+                    eval0 += 1.0 - power(q, pw);
+                }
+                let mut eval2 = None;
+                for (y0, to0) in to.iter().take(n).enumerate() {
+                    for (x0, _to0) in to0.iter().take(n).filter(|&&to| to == *to_cnt).enumerate() {
+                        for (y1, to1) in to.iter().take(n).enumerate() {
+                            for (x1, _to1) in
+                                to1.iter().take(n).filter(|&&to| to == *to_cnt).enumerate()
+                            {
+                                if (y0, x0) == (y1, x1) {
+                                    continue;
+                                }
+                                let ev =
+                                    (y0 as i32 - y1 as i32).abs() + (x0 as i32 - x1 as i32).abs();
+                                eval2.chmin(ev);
+                            }
+                        }
+                    }
+                }
+                let eval2 = if let Some(eval2) = eval2 { eval2 } else { 0 };
+                (eval0, eval1, eval2)
+            }
             let mut rand = XorShift64::new();
-            let mut best = vec![[[None; PMAX - PMIN + 1]; VMAX - VMIN + 1]; NMAX - NMIN + 1];
+            let mut to = vec![vec![0; NMAX]; NMAX];
+            let mut to1 = vec![vec![0; NMAX]; NMAX];
+            let mut to_cnt = 0u64;
+            let mut to1_cnt = 0u64;
+            let mut best = vec![[[(0.0, 0, 0); PMAX - PMIN + 1]; VMAX - VMIN + 1]; NMAX - NMIN + 1];
             let mut best_ls = (NMIN..=NMAX)
                 .map(|n| {
                     (VMIN..=VMAX)
                         .map(|v| {
                             (PMIN..=PMAX)
-                                .map(|_p| {
+                                .map(|pi| {
                                     let mut ls = vec![];
                                     let mut used = 1;
                                     let mut max_sz = 0;
@@ -6238,6 +6312,15 @@ mod solver {
                                             used += 1;
                                         }
                                     }
+                                    best[n - NMIN][v - VMIN][pi - PMIN] = evaluate(
+                                        n,
+                                        pi as f64 / 10.0,
+                                        &ls,
+                                        &mut to,
+                                        &mut to_cnt,
+                                        &mut to1,
+                                        &mut to1_cnt,
+                                    );
                                     ls
                                 })
                                 .collect_vec()
@@ -6246,10 +6329,6 @@ mod solver {
                 })
                 .collect_vec();
 
-            let mut to = vec![vec![0; NMAX]; NMAX];
-            let mut to1 = vec![vec![0; NMAX]; NMAX];
-            let mut to_cnt = 0u64;
-            let mut to1_cnt = 0u64;
             for li in 0..100 {
                 eprintln!("{li}");
                 let mut upd = false;
@@ -6262,7 +6341,6 @@ mod solver {
                             best.iter_mut().zip(best_ls.iter_mut()).enumerate()
                         {
                             let p = (PMIN + pi) as f64 / 10.0;
-                            let q = 1.0 - p * 0.5;
                             let mut ls = vec![];
                             let mut now = vec![];
                             for vi in 0..v {
@@ -6273,70 +6351,8 @@ mod solver {
                                     now.clear();
                                 }
                             }
-                            to_cnt += 1;
-                            let mut eval0 = 0.0;
-                            let mut eval1 = 0;
-                            for ls in &ls {
-                                to1_cnt += 1;
-                                let mut pw = 0;
-                                for dir in 0..(1 << (2 * ls.len())) {
-                                    let (mut y, mut x) = (0, 0);
-                                    for (i, &l) in ls.iter().enumerate() {
-                                        match (dir >> (2 * i)) & 3 {
-                                            0 => {
-                                                x += l;
-                                            }
-                                            1 => {
-                                                x -= l;
-                                            }
-                                            2 => {
-                                                y -= l;
-                                            }
-                                            3 => {
-                                                y += l;
-                                            }
-                                            _ => unreachable!(),
-                                        }
-                                    }
-                                    if y <= 0 as i32 || x < 0 {
-                                        continue;
-                                    }
-                                    if y >= n as i32 || x >= n as i32 {
-                                        continue;
-                                    }
-                                    if to[y as usize][x as usize].chmax(to_cnt) {
-                                        eval1 += 1;
-                                    }
-                                    if to1[y as usize][x as usize].chmax(to1_cnt) {
-                                        pw += 1;
-                                    }
-                                }
-                                eval0 += 1.0 - power(q, pw);
-                            }
-                            let mut eval2 = None;
-                            for (y0, to0) in to.iter().take(n).enumerate() {
-                                for (x0, _to0) in
-                                    to0.iter().take(n).filter(|&&to| to == to_cnt).enumerate()
-                                {
-                                    for (y1, to1) in to.iter().take(n).enumerate() {
-                                        for (x1, _to1) in to1
-                                            .iter()
-                                            .take(n)
-                                            .filter(|&&to| to == to_cnt)
-                                            .enumerate()
-                                        {
-                                            if (y0, x0) == (y1, x1) {
-                                                continue;
-                                            }
-                                            let ev = (y0 as i32 - y1 as i32).abs()
-                                                + (x0 as i32 - x1 as i32).abs();
-                                            eval2.chmin(ev);
-                                        }
-                                    }
-                                }
-                            }
-                            let eval2 = if let Some(eval2) = eval2 { eval2 } else { 0 };
-                            let eval = (eval0, eval1, eval2);
+                            let eval =
+                                evaluate(n, p, &ls, &mut to, &mut to_cnt, &mut to1, &mut to1_cnt);
                             if best.chmax(eval) {
                                 *best_ls = ls;
                                 upd = true;
@@ -6347,7 +6363,7 @@ mod solver {
                 if upd {
                     let mut path = std::path::PathBuf::new();
                     for idx in 1.. {
-                        path = std::path::PathBuf::from(format!("tbl{}.txt", idx));
+                        path = std::path::PathBuf::from(format!(r"tbl\tbl{}.txt", idx));
                         if !path.exists() {
                             break;
                         }
