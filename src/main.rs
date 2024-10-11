@@ -5869,6 +5869,7 @@ use procon_reader::*;
 
 fn main() {
     solver::Solver::new().solve();
+    //solver::Solver::random_search();
 }
 
 mod solver {
@@ -6150,100 +6151,6 @@ mod solver {
                     }
                 }
             }
-            pub fn best_split(n: usize, m: usize, v: usize) -> Vec<usize> {
-                fn power(x: f64, mut p: u64) -> f64 {
-                    let mut ret = 1.0;
-                    let mut mul = x;
-                    while p > 0 {
-                        if (p & 1) != 0 {
-                            ret *= mul;
-                        }
-                        p >>= 1;
-                        mul = mul * mul;
-                    }
-                    ret
-                }
-                let p = 0.5 * (m as f64 / (n * n) as f64);
-                let q = 1.0 - p;
-                let used = v - 1;
-                let ex = (0..=used)
-                    .map(|now| 1.0 - power(q, 4u64.pow(now as u32)))
-                    .collect_vec();
-                let mut best_eval = None;
-                let mut best_bit = 0;
-                for bit in 0..(1 << (used - 1)) {
-                    let mut eval = 0.0;
-                    let mut now = 0;
-                    for i in 0..(used - 1) {
-                        now += 1;
-                        if ((bit >> i) & 1) != 0 {
-                            eval += ex[now];
-                            now = 0;
-                        }
-                    }
-                    {
-                        now += 1;
-                        eval += ex[now];
-                    }
-                    if best_eval.chmax(eval) {
-                        best_bit = bit;
-                    }
-                }
-                assert!(best_eval.is_some());
-                let best_bit = best_bit;
-                let mut ret = vec![];
-                let mut now = 0;
-                for i in 0..(used - 1) {
-                    now += 1;
-                    if ((best_bit >> i) & 1) != 0 {
-                        ret.push(now);
-                        now = 0;
-                    }
-                }
-                {
-                    now += 1;
-                    ret.push(now);
-                }
-                ret
-                /*
-                let mut best_eval = best_eval.unwrap();
-                let mut rand = XorShift64::new();
-                let mut best_g = vec![];
-                for _li in 0..10000 {
-                    let mut g = vec![vec![]; v];
-                    let mut d = vec![0; v];
-                    for i in 1..v {
-                        let pi = rand.next_usize() % i;
-                        g[pi].push(i);
-                        d[i] = d[pi] + 1;
-                    }
-                    let mut eval = 0.0;
-                    for i in 1..v {
-                        if !g[i].is_empty() {
-                            continue;
-                        }
-                        eval += ex[d[i]];
-                    }
-                    if best_eval.chmax(eval) {
-                        best_g = g;
-                    }
-                }
-                fn dfs(v: usize, g: &[Vec<usize>]) -> usize {
-                    let mut ret = 1;
-                    for &nv in g[v].iter() {
-                        ret += dfs(nv, g);
-                    }
-                    ret
-                }
-                let mut par = vec![0; v];
-                for i in 0..n {
-                    for &ni in best_g[i].iter() {
-                        par[ni] = i;
-                    }
-                }
-                return par;
-                */
-            }
         }
     }
     use arm_shape::ArmShape;
@@ -6256,7 +6163,235 @@ mod solver {
         t: FixedBitSet,
         cmd_base: Vec<Vec<Vec<char>>>,
     }
+    const NMIN: usize = 15;
+    const NMAX: usize = 30;
+    const VMIN: usize = 5 - 1;
+    const VMAX: usize = 15 - 1;
+    const PMIN: usize = 1;
+    const PMAX: usize = 5;
     impl Solver {
+        pub fn random_search() {
+            fn power(x: f64, mut p: u64) -> f64 {
+                let mut ret = 1.0;
+                let mut mul = x;
+                while p > 0 {
+                    if (p & 1) != 0 {
+                        ret *= mul;
+                    }
+                    p >>= 1;
+                    mul = mul * mul;
+                }
+                ret
+            }
+            let mut rand = XorShift64::new();
+            let mut best = vec![[[None; PMAX - PMIN + 1]; VMAX - VMIN + 1]; NMAX - NMIN + 1];
+            let mut best_ls = (NMIN..=NMAX)
+                .map(|n| {
+                    (VMIN..=VMAX)
+                        .map(|v| {
+                            (PMIN..=PMAX)
+                                .map(|_p| {
+                                    let mut ls = vec![];
+                                    let mut used = 1;
+                                    let mut max_sz = 0;
+                                    for sz in 1.. {
+                                        let nused = used + sz;
+                                        if nused > v {
+                                            break;
+                                        }
+                                        used = nused;
+                                        ls.push(vec![1; sz]);
+                                        max_sz.chmax(sz);
+                                    }
+                                    let unit = n / max_sz;
+                                    debug_assert!(unit <= n);
+                                    ls.iter_mut().for_each(|ls| {
+                                        ls.iter_mut().for_each(|l| {
+                                            *l = unit as i32;
+                                        })
+                                    });
+                                    {
+                                        let mut que = BinaryHeap::new();
+                                        for (i, ls) in ls.iter().cloned().enumerate() {
+                                            que.push((ls[0], Reverse(i), ls));
+                                        }
+                                        while used < v {
+                                            let Some((_, Reverse(i), ls0)) = que.pop() else {
+                                                break;
+                                            };
+                                            let len0 = ls0.len();
+                                            let sm = ls0.into_iter().sum::<i32>();
+                                            let len1 = len0 + 1;
+                                            let unit = sm / len1 as i32;
+                                            if unit == 0 {
+                                                continue;
+                                            }
+                                            let mut ls1 = vec![unit; len1];
+                                            let rem = sm - unit * len1 as i32;
+                                            for j in 0..rem as usize {
+                                                ls1[j] += 1;
+                                            }
+                                            debug_assert!(ls1.iter().all(|&l| l > 0));
+                                            debug_assert_eq!(sm, ls1.iter().sum::<i32>());
+                                            ls[i] = ls1.clone();
+                                            que.push((ls1[0], Reverse(i), ls1));
+                                            used += 1;
+                                        }
+                                    }
+                                    ls
+                                })
+                                .collect_vec()
+                        })
+                        .collect_vec()
+                })
+                .collect_vec();
+
+            let mut to = vec![vec![0; NMAX]; NMAX];
+            let mut to1 = vec![vec![0; NMAX]; NMAX];
+            let mut to_cnt = 0u64;
+            let mut to1_cnt = 0u64;
+            for li in 0..100 {
+                eprintln!("{li}");
+                let mut upd = false;
+                for (ni, (best, best_ls)) in best.iter_mut().zip(best_ls.iter_mut()).enumerate() {
+                    let n = NMIN + ni;
+                    for (vi, (best, best_ls)) in best.iter_mut().zip(best_ls.iter_mut()).enumerate()
+                    {
+                        let v = VMIN + vi;
+                        for (pi, (best, best_ls)) in
+                            best.iter_mut().zip(best_ls.iter_mut()).enumerate()
+                        {
+                            let p = (PMIN + pi) as f64 / 10.0;
+                            let q = 1.0 - p * 0.5;
+                            let mut ls = vec![];
+                            let mut now = vec![];
+                            for vi in 0..v {
+                                let l = 1 + (rand.next_usize() % (n - 1)) as i32;
+                                now.push(l);
+                                if now.len() >= 5 || vi == v - 1 || rand.next_usize() % 2 == 0 {
+                                    ls.push(now.clone());
+                                    now.clear();
+                                }
+                            }
+                            to_cnt += 1;
+                            let mut eval0 = 0.0;
+                            let mut eval1 = 0;
+                            for ls in &ls {
+                                to1_cnt += 1;
+                                let mut pw = 0;
+                                for dir in 0..(1 << (2 * ls.len())) {
+                                    let (mut y, mut x) = (0, 0);
+                                    for (i, &l) in ls.iter().enumerate() {
+                                        match (dir >> (2 * i)) & 3 {
+                                            0 => {
+                                                x += l;
+                                            }
+                                            1 => {
+                                                x -= l;
+                                            }
+                                            2 => {
+                                                y -= l;
+                                            }
+                                            3 => {
+                                                y += l;
+                                            }
+                                            _ => unreachable!(),
+                                        }
+                                    }
+                                    if y <= 0 as i32 || x < 0 {
+                                        continue;
+                                    }
+                                    if y >= n as i32 || x >= n as i32 {
+                                        continue;
+                                    }
+                                    if to[y as usize][x as usize].chmax(to_cnt) {
+                                        eval1 += 1;
+                                    }
+                                    if to1[y as usize][x as usize].chmax(to1_cnt) {
+                                        pw += 1;
+                                    }
+                                }
+                                eval0 += 1.0 - power(q, pw);
+                            }
+                            let mut eval2 = None;
+                            for (y0, to0) in to.iter().take(n).enumerate() {
+                                for (x0, _to0) in
+                                    to0.iter().take(n).filter(|&&to| to == to_cnt).enumerate()
+                                {
+                                    for (y1, to1) in to.iter().take(n).enumerate() {
+                                        for (x1, _to1) in to1
+                                            .iter()
+                                            .take(n)
+                                            .filter(|&&to| to == to_cnt)
+                                            .enumerate()
+                                        {
+                                            if (y0, x0) == (y1, x1) {
+                                                continue;
+                                            }
+                                            let ev = (y0 as i32 - y1 as i32).abs()
+                                                + (x0 as i32 - x1 as i32).abs();
+                                            eval2.chmin(ev);
+                                        }
+                                    }
+                                }
+                            }
+                            let eval2 = if let Some(eval2) = eval2 { eval2 } else { 0 };
+                            let eval = (eval0, eval1, eval2);
+                            if best.chmax(eval) {
+                                *best_ls = ls;
+                                upd = true;
+                            }
+                        }
+                    }
+                }
+                if upd {
+                    let mut path = std::path::PathBuf::new();
+                    for idx in 1.. {
+                        path = std::path::PathBuf::from(format!("tbl{}.txt", idx));
+                        if !path.exists() {
+                            break;
+                        }
+                    }
+                    let mut f = std::fs::File::create(&path).unwrap();
+                    let mut el = false;
+                    for (ni, best_ls) in best_ls.iter().enumerate() {
+                        let n = NMIN + ni;
+                        for (vi, best_ls) in best_ls.iter().enumerate() {
+                            let v = VMIN + vi;
+                            for (pi, best_ls) in best_ls.iter().enumerate() {
+                                let p = PMIN + pi;
+                                use std::io::Write;
+                                if el {
+                                    write!(&mut f, "else ").unwrap();
+                                } else {
+                                    el = true;
+                                }
+                                writeln!(&mut f, "if n == {n} && v == {v} && pi == {p}").unwrap();
+                                writeln!(&mut f, "{{").unwrap();
+                                {
+                                    write!(&mut f, "ls = vec![").unwrap();
+                                    for ls in best_ls.iter() {
+                                        write!(&mut f, "vec![").unwrap();
+                                        for &l in ls.iter() {
+                                            write!(&mut f, "{l},").unwrap();
+                                        }
+                                        writeln!(&mut f, "],").unwrap();
+                                    }
+                                    writeln!(&mut f, "];").unwrap();
+                                }
+                                writeln!(&mut f, "}}").unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        fn best_split(n: usize, m: usize, v: usize) -> Vec<Vec<i32>> {
+            let mut ls = vec![];
+            let pi = ((10 * m) / (n * n)).clamp(PMIN, PMAX);
+            assert!(!ls.is_empty());
+            ls
+        }
         pub fn new() -> Self {
             let t0 = Instant::now();
             let n = read::<usize>();
@@ -6393,6 +6528,7 @@ mod solver {
                     used += 1;
                 }
             }
+            let ls = Self::best_split(self.n, self.m, self.v - 1);
             let mut g = vec![vec![]; self.v];
             let mut nxt = 0;
             for ls in ls {
