@@ -6167,8 +6167,9 @@ mod solver {
     const NMAX: usize = 30;
     const VMIN: usize = 5 - 1;
     const VMAX: usize = 15 - 1;
-    const PMIN: usize = 1;
-    const PMAX: usize = 5;
+    const PRESOL: usize = 10;
+    const PMIN: usize = PRESOL / 10;
+    const PMAX: usize = PRESOL / 2;
     impl Solver {
         pub fn random_search() {
             fn power(x: f64, mut p: u64) -> f64 {
@@ -6314,7 +6315,7 @@ mod solver {
                                     }
                                     best[n - NMIN][v - VMIN][pi - PMIN] = evaluate(
                                         n,
-                                        (pi as f64 + 0.5) / 10.0,
+                                        (pi as f64 + 0.5) / PRESOL as f64,
                                         &ls,
                                         &mut to,
                                         &mut to_cnt,
@@ -6339,7 +6340,7 @@ mod solver {
                         for (pi, (best, best_ls)) in
                             best.iter_mut().zip(best_ls.iter_mut()).enumerate()
                         {
-                            let p = ((PMIN + pi) as f64 + 0.5) / 10.0;
+                            let p = ((PMIN + pi) as f64 + 0.5) / PRESOL as f64;
                             let mut ls = vec![];
                             let mut now = vec![];
                             for vi in 0..v {
@@ -6404,7 +6405,7 @@ mod solver {
         }
         fn best_split(n: usize, m: usize, v: usize) -> Vec<Vec<i32>> {
             let mut ls = vec![];
-            let pi = ((10 * m) / (n * n)).clamp(PMIN, PMAX);
+            let pi = ((PRESOL * m) / (n * n)).clamp(PMIN, PMAX);
             assert!(!ls.is_empty());
             ls
         }
