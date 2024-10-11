@@ -6167,7 +6167,7 @@ mod solver {
     const NMAX: usize = 30;
     const VMIN: usize = 5 - 1;
     const VMAX: usize = 15 - 1;
-    const PRESOL: usize = 10;
+    const PRESOL: usize = 20;
     const PMIN: usize = PRESOL / 10;
     const PMAX: usize = PRESOL / 2;
     impl Solver {
@@ -6192,7 +6192,7 @@ mod solver {
                 to_cnt: &mut u64,
                 to1: &mut [Vec<u64>],
                 to1_cnt: &mut u64,
-            ) -> (f64, i32, i32) {
+            ) -> Option<(f64, i32, i32)> {
                 let q = 1.0 - p * 0.5;
                 *to_cnt += 1;
                 let mut eval0 = 0.0;
@@ -6200,6 +6200,7 @@ mod solver {
                 for ls in ls {
                     *to1_cnt += 1;
                     let mut pw = 0;
+                    let mut ok = false;
                     for dir in 0..(1 << (2 * ls.len())) {
                         let (mut y, mut x) = (0, 0);
                         for (i, &l) in ls.iter().enumerate() {
@@ -6231,12 +6232,21 @@ mod solver {
                         if to1[y as usize][x as usize].chmax(*to1_cnt) {
                             pw += 1;
                         }
+                        if y <= n as i32 / 2 && x <= n as i32 / 2 {
+                            ok = true;
+                        }
+                    }
+                    if !ok {
+                        return None;
                     }
                     eval0 += 1.0 - power(q, pw);
                 }
                 let mut eval2 = None;
                 for (y0, to0) in to.iter().take(n).enumerate() {
                     for (x0, _to0) in to0.iter().take(n).filter(|&&to| to == *to_cnt).enumerate() {
+                        if (y0, x0) != (0, 0) {
+                            eval2.chmin((y0 + x0) as i32);
+                        }
                         for (y1, to1) in to.iter().take(n).enumerate() {
                             for (x1, _to1) in
                                 to1.iter().take(n).filter(|&&to| to == *to_cnt).enumerate()
@@ -6252,14 +6262,14 @@ mod solver {
                     }
                 }
                 let eval2 = if let Some(eval2) = eval2 { eval2 } else { 0 };
-                (eval0, eval1, eval2)
+                Some((eval0, eval1, eval2))
             }
             let mut rand = XorShift64::new();
             let mut to = vec![vec![0; NMAX]; NMAX];
             let mut to1 = vec![vec![0; NMAX]; NMAX];
             let mut to_cnt = 0u64;
             let mut to1_cnt = 0u64;
-            let mut best = vec![[[(0.0, 0, 0); PMAX - PMIN + 1]; VMAX - VMIN + 1]; NMAX - NMIN + 1];
+            let mut best = vec![[[None; PMAX - PMIN + 1]; VMAX - VMIN + 1]; NMAX - NMIN + 1];
             let mut best_ls = (NMIN..=NMAX)
                 .map(|n| {
                     (VMIN..=VMAX)
@@ -6330,7 +6340,7 @@ mod solver {
                 })
                 .collect_vec();
 
-            for li in 0.. {
+            for li in 1.. {
                 let mut upd = false;
                 for (ni, (best, best_ls)) in best.iter_mut().zip(best_ls.iter_mut()).enumerate() {
                     let n = NMIN + ni;
@@ -6351,8 +6361,11 @@ mod solver {
                                     now.clear();
                                 }
                             }
-                            let eval =
-                                evaluate(n, p, &ls, &mut to, &mut to_cnt, &mut to1, &mut to1_cnt);
+                            let Some(eval) =
+                                evaluate(n, p, &ls, &mut to, &mut to_cnt, &mut to1, &mut to1_cnt)
+                            else {
+                                continue;
+                            };
                             if best.chmax(eval) {
                                 *best_ls = ls;
                                 upd = true;
@@ -6361,14 +6374,10 @@ mod solver {
                     }
                 }
                 if upd {
-                    eprintln!("update {li}");
-                    let mut path = std::path::PathBuf::new();
-                    for idx in 1.. {
-                        path = std::path::PathBuf::from(format!(r"tbl\tbl{}.txt", idx));
-                        if !path.exists() {
-                            break;
-                        }
-                    }
+                    eprintln!("{li}");
+                }
+                if li % 10000 == 0 {
+                    let path = std::path::PathBuf::from(format!(r"tbl\tbl{}.txt", li));
                     let mut f = std::fs::File::create(&path).unwrap();
                     let mut el = false;
                     for (ni, best_ls) in best_ls.iter().enumerate() {
