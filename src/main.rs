@@ -6329,8 +6329,7 @@ mod solver {
                 })
                 .collect_vec();
 
-            for li in 0..100 {
-                eprintln!("{li}");
+            for li in 0.. {
                 let mut upd = false;
                 for (ni, (best, best_ls)) in best.iter_mut().zip(best_ls.iter_mut()).enumerate() {
                     let n = NMIN + ni;
@@ -6361,6 +6360,7 @@ mod solver {
                     }
                 }
                 if upd {
+                    eprintln!("update {li}");
                     let mut path = std::path::PathBuf::new();
                     for idx in 1.. {
                         path = std::path::PathBuf::from(format!(r"tbl\tbl{}.txt", idx));
