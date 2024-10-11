@@ -6314,7 +6314,7 @@ mod solver {
                                     }
                                     best[n - NMIN][v - VMIN][pi - PMIN] = evaluate(
                                         n,
-                                        pi as f64 / 10.0,
+                                        (pi as f64 + 0.5) / 10.0,
                                         &ls,
                                         &mut to,
                                         &mut to_cnt,
@@ -6340,7 +6340,7 @@ mod solver {
                         for (pi, (best, best_ls)) in
                             best.iter_mut().zip(best_ls.iter_mut()).enumerate()
                         {
-                            let p = (PMIN + pi) as f64 / 10.0;
+                            let p = ((PMIN + pi) as f64 + 0.5) / 10.0;
                             let mut ls = vec![];
                             let mut now = vec![];
                             for vi in 0..v {
