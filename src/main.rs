@@ -5868,6 +5868,7 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 
 fn main() {
+    //solver::Solver::random_search();
     solver::Solver::new().solve();
 }
 
@@ -6188,65 +6189,16 @@ mod solver {
                     shape[self.abs_vs[v1]] = (self.abs_vs[v0], d);
                 }
             }
-            pub fn best_split(n: usize, m: usize, v: usize) -> Vec<usize> {
-                fn power(x: f64, mut p: u64) -> f64 {
-                    let mut ret = 1.0;
-                    let mut mul = x;
-                    while p > 0 {
-                        if (p & 1) != 0 {
-                            ret *= mul;
-                        }
-                        p >>= 1;
-                        mul = mul * mul;
-                    }
-                    ret
-                }
-                let p = 0.5 * (m as f64 / (n * n) as f64);
-                let q = 1.0 - p;
-                let used = v - 1;
-                let ex = (0..=used)
-                    .map(|now| 1.0 - power(q, 4u64.pow(now as u32)))
-                    .collect_vec();
-                let mut best_eval = None;
-                let mut best_bit = 0;
-                for bit in 0..(1 << (used - 1)) {
-                    let mut eval = 0.0;
-                    let mut now = 0;
-                    for i in 0..(used - 1) {
-                        now += 1;
-                        if ((bit >> i) & 1) != 0 {
-                            eval += ex[now];
-                            now = 0;
-                        }
-                    }
-                    {
-                        now += 1;
-                        eval += ex[now];
-                    }
-                    if best_eval.chmax(eval) {
-                        best_bit = bit;
-                    }
-                }
-                assert!(best_eval.is_some());
-                let best_bit = best_bit;
-                let mut ret = vec![];
-                let mut now = 0;
-                for i in 0..(used - 1) {
-                    now += 1;
-                    if ((best_bit >> i) & 1) != 0 {
-                        ret.push(now);
-                        now = 0;
-                    }
-                }
-                {
-                    now += 1;
-                    ret.push(now);
-                }
-                ret
-            }
         }
     }
     use arm_shape::ArmShape;
+    const NMIN: usize = 15;
+    const NMAX: usize = 30;
+    const VMIN: usize = 5;
+    const VMAX: usize = 15;
+    const PRESOL: usize = 20;
+    const PMIN: usize = PRESOL / 10;
+    const PMAX: usize = PRESOL / 2;
     pub struct Solver {
         t0: Instant,
         n: usize,
@@ -6351,7 +6303,7 @@ mod solver {
             let x_ave = x_sum / (2 * self.m);
             (y_ave, x_ave)
         }
-        fn gen_tree_shape(&self) -> Vec<Vec<usize>> {
+        pub fn random_search() {
             fn power(x: f64, mut p: u64) -> f64 {
                 let mut ret = 1.0;
                 let mut mul = x;
@@ -6364,234 +6316,319 @@ mod solver {
                 }
                 ret
             }
-            let p = 0.3 * (self.m as f64 / (self.n * self.n) as f64);
-            let q = 1.0 - p;
-            let ex = (0..self.v)
-                .map(|depth| 1.0 - power(q, 4u64.pow(depth as u32)))
-                .collect_vec();
-            let mut rand = XorShift64::new();
-            let mut best_g = vec![];
-            let mut best_eval = None;
-            //while self.t0.elapsed().as_millis() < 750 {
-            while self.t0.elapsed().as_millis() < 750 {
-                let mut g = vec![vec![]; self.v];
-                let mut d = vec![0; self.v];
-                for i in 1..self.v {
-                    let pi = rand.next_usize() % i;
-                    g[pi].push(i);
-                    d[i] = d[pi] + 1;
-                }
-                let mut eval = 0.0;
-                for i in 1..self.v {
-                    if !g[i].is_empty() {
-                        continue;
-                    }
-                    eval += ex[d[i]];
-                }
-                if best_eval.chmax(eval) {
-                    best_g = g;
-                }
-            }
-            best_g
-        }
-        fn gen_tree(&self) -> Vec<Vec<(usize, i32)>> {
-            let mut ls = vec![];
-            let mut used = 1;
-            let mut max_sz = 0;
-            for sz in 1.. {
-                let nused = used + sz;
-                if nused > self.v {
-                    break;
-                }
-                used = nused;
-                ls.push(vec![1; sz]);
-                max_sz.chmax(sz);
-            }
-            let unit = (self.n / max_sz) as i32;
-            debug_assert!(unit <= self.n as i32);
-            ls.iter_mut().for_each(|ls| {
-                ls.iter_mut().for_each(|l| {
-                    *l = unit;
-                })
-            });
-            let mut nxt = 1;
-            let mut g = vec![vec![]; self.v];
-            let mut pres = vec![0; ls.len()];
-            for (i, ls) in ls.iter().enumerate() {
-                let mut pre = 0;
-                for &l in ls.iter() {
-                    g[pre].push((nxt, l));
-                    pres[i] = pre;
-                    pre = nxt;
-                    nxt += 1;
-                }
-            }
-            for (i, v1) in (nxt..self.v).enumerate() {
-                g[pres[i]].push((v1, max(1, unit / 2)));
-            }
-            return g;
-
-            let g = self.gen_tree_shape();
-            let nv0s = g[0].clone();
-            fn get_depth(v0: usize, d0: usize, g: &[Vec<(usize, i32)>]) -> usize {
-                let mut ret = d0;
-                let d1 = d0 + 1;
-                for (nv, _) in g[v0].iter() {
-                    ret.chmax(get_depth(*nv, d1, g));
-                }
-                ret
-            }
-            let mut g = g
-                .into_iter()
-                .map(|g| g.into_iter().map(|v| (v, 1)).collect_vec())
-                .collect_vec();
-            for nv0 in nv0s {
-                let depth = get_depth(nv0, 1, &g);
-                let ln = max(1, self.n / (2 * depth)) as i32;
-                g[0].iter_mut().for_each(|(v, d)| {
-                    if *v == nv0 {
-                        *d = ln;
-                    }
-                });
-                let mut que = vec![nv0];
-                while let Some(v0) = que.pop() {
-                    g[v0].iter_mut().for_each(|(_, d)| {
-                        *d = ln;
-                    });
-                    for (v1, _) in g[v0].iter() {
-                        que.push(*v1);
-                    }
-                }
-            }
-            let mut rand = XorShift64::new();
-            let mut eval = None;
-            while self.t0.elapsed().as_millis() < 1500 {
-                let mut ng = g.clone();
-                ng.iter_mut().for_each(|ng| {
-                    ng.iter_mut().for_each(|(_, d)| {
-                        match rand.next_usize() % 3 {
-                            0 => {
-                                //
-                            }
-                            1 => {
-                                *d = min(self.n as i32 / 2, *d + 1);
-                            }
-                            2 => {
-                                *d = max(1, *d - 1);
-                            }
-                            _ => unreachable!(),
+            fn evaluate(
+                n: usize,
+                p: f64,
+                g: &[Vec<(usize, i32)>],
+                to: &mut [Vec<u64>],
+                to_cnt: &mut u64,
+                to1: &mut [Vec<u64>],
+                to1_cnt: &mut u64,
+            ) -> Option<(f64, i32, i32)> {
+                fn dfs(
+                    n: usize,
+                    q: f64,
+                    nv0: usize,
+                    v0: usize,
+                    g: &[Vec<(usize, i32)>],
+                    pos: &mut [(i32, i32)],
+                    to_cnt: u64,
+                    to: &mut [Vec<u64>],
+                    to1_cnt: u64,
+                    to1: &mut [Vec<u64>],
+                    depth: &[u64],
+                    eval0: &mut f64,
+                    eval1: &mut i32,
+                    terminal_ok: &mut u16,
+                ) {
+                    let (y0, x0) = pos[v0];
+                    if g[v0].is_empty() {
+                        // terminal
+                        if y0 <= 0 || x0 < 0 {
+                            return;
                         }
-                    })
-                });
-                let sz = self.n;
-                let mut reach = vec![vec![0; sz]; sz];
-                for _ in 0..100 {
-                    let dir = rand.next_usize() % (1 << (ng.len() - 1));
-                    let mut que = vec![0];
-                    let mut pos = vec![(0i32, 0i32); ng.len()];
-                    while let Some(v0) = que.pop() {
-                        let (y0, x0) = pos[v0];
-                        if ng[v0].is_empty() {
-                            if y0 <= 0 || y0 >= sz as i32 || x0 < 0 || x0 >= sz as i32 {
-                                continue;
-                            }
-                            reach[y0 as usize][x0 as usize] |= 1u16 << v0;
+                        if y0 >= n as i32 || x0 >= n as i32 {
+                            return;
                         }
-                        for &(v1, d) in ng[v0].iter() {
-                            pos[v1] = match (dir >> (2 * (v1 - 1))) & 3 {
-                                LEFT => (y0, x0 - d),
-                                RIGHT => (y0, x0 + d),
-                                UPPER => (y0 - d, x0),
-                                LOWER => (y0 + d, x0),
+                        if to1[y0 as usize][x0 as usize].chmax(to1_cnt) {
+                            *eval0 += 1.0 - power(q, depth[v0]);
+                        }
+                        if to[y0 as usize][x0 as usize].chmax(to_cnt) {
+                            *eval1 += 1;
+                        }
+                        if (x0 as usize <= n / 2) && (y0 as usize <= n / 2) {
+                            *terminal_ok |= 1u16 << v0;
+                        }
+                    }
+                    for &(v1, d) in g[v0].iter() {
+                        if v0 == 0 && v1 != nv0 {
+                            continue;
+                        }
+                        for nd in 0..4 {
+                            pos[v1] = match nd {
+                                0 => (x0 + d, y0),
+                                1 => (x0 - d, y0),
+                                2 => (x0, y0 + d),
+                                3 => (x0, y0 - d),
                                 _ => unreachable!(),
                             };
-                            que.push(v1);
+                            dfs(
+                                n,
+                                q,
+                                nv0,
+                                v1,
+                                g,
+                                pos,
+                                to_cnt,
+                                to,
+                                to1_cnt,
+                                to1,
+                                depth,
+                                eval0,
+                                eval1,
+                                terminal_ok,
+                            );
                         }
                     }
                 }
-                let mut ors = 0;
-                for y in 0..=self.n / 2 {
-                    for x in 0..=self.n / 2 {
-                        ors |= reach[y][x];
+                let q = 1.0 - p * 0.5;
+                let mut eval0 = 0.0;
+                let mut eval1 = 0;
+                let mut depth = vec![0u64; g.len()];
+                let mut pos = vec![(0, 0); g.len()];
+                let mut que = vec![0];
+                while let Some(v0) = que.pop() {
+                    for &(v1, _d) in g[v0].iter() {
+                        depth[v1] = depth[v0] + 1;
+                        que.push(v1);
                     }
                 }
-                if ors != (1 << (ng.len() - 1)) - 1 {
-                    continue;
+                let depth = depth;
+                let mut terminal_ok = 0;
+                *to_cnt += 1;
+                for &(nv0, _d0) in g[0].iter() {
+                    *to1_cnt += 1;
+                    dfs(
+                        n,
+                        q,
+                        nv0,
+                        0,
+                        &g,
+                        &mut pos,
+                        *to_cnt,
+                        to,
+                        *to1_cnt,
+                        to1,
+                        &depth,
+                        &mut eval0,
+                        &mut eval1,
+                        &mut terminal_ok,
+                    );
                 }
-                let eval1 = reach
-                    .into_iter()
-                    .map(|reach| {
-                        reach
-                            .into_iter()
-                            .filter(|reach| reach.count_ones() > 0)
-                            .count()
-                    })
-                    .sum::<usize>();
-                if eval.chmax(eval1) {
-                    g = ng;
-                }
-            }
-            g
-        }
-        fn gen_arm_shapes(&self) -> (Vec<ArmShape>, usize) {
-            /*
-            let mut ls = vec![];
-            let mut used = 1;
-            let mut max_sz = 0;
-            for sz in 1.. {
-                let nused = used + sz;
-                if nused > self.v {
-                    break;
-                }
-                used = nused;
-                ls.push(vec![1; sz]);
-                max_sz.chmax(sz);
-            }
-            let unit = self.n / max_sz;
-            debug_assert!(unit <= self.n);
-            ls.iter_mut().for_each(|ls| {
-                ls.iter_mut().for_each(|l| {
-                    *l = unit as i32;
-                })
-            });
-            {
-                let mut que = BinaryHeap::new();
-                for (i, ls) in ls.iter().cloned().enumerate() {
-                    que.push((ls[0], Reverse(i), ls));
-                }
-                while used < self.v {
-                    let Some((_, Reverse(i), ls0)) = que.pop() else {
-                        break;
-                    };
-                    let len0 = ls0.len();
-                    let sm = ls0.into_iter().sum::<i32>();
-                    let len1 = len0 + 1;
-                    let unit = sm / len1 as i32;
-                    if unit == 0 {
+                for vi in 1..g.len() {
+                    if !g[vi].is_empty() {
                         continue;
                     }
-                    let mut ls1 = vec![unit; len1];
-                    let rem = sm - unit * len1 as i32;
-                    for j in 0..rem as usize {
-                        ls1[j] += 1;
+                    if ((terminal_ok >> vi) & 1) == 0 {
+                        return None;
                     }
-                    debug_assert!(ls1.iter().all(|&l| l > 0));
-                    debug_assert_eq!(sm, ls1.iter().sum::<i32>());
-                    ls[i] = ls1.clone();
-                    que.push((ls1[0], Reverse(i), ls1));
-                    used += 1;
+                }
+                let mut eval2 = None;
+                for (y0, to0) in to.iter().take(n).enumerate() {
+                    for (x0, _to0) in to0.iter().take(n).filter(|&&to| to == *to_cnt).enumerate() {
+                        if (y0, x0) != (0, 0) {
+                            eval2.chmin((y0 + x0) as i32);
+                        }
+                        for (y1, to1) in to.iter().take(n).enumerate() {
+                            for (x1, _to1) in
+                                to1.iter().take(n).filter(|&&to| to == *to_cnt).enumerate()
+                            {
+                                if (y0, x0) == (y1, x1) {
+                                    continue;
+                                }
+                                let ev =
+                                    (y0 as i32 - y1 as i32).abs() + (x0 as i32 - x1 as i32).abs();
+                                eval2.chmin(ev);
+                            }
+                        }
+                    }
+                }
+                let eval2 = if let Some(eval2) = eval2 { eval2 } else { 0 };
+                Some((eval0, eval1, eval2))
+            }
+            let mut rand = XorShift64::new();
+            let mut to = vec![vec![0; NMAX]; NMAX];
+            let mut to1 = vec![vec![0; NMAX]; NMAX];
+            let mut to_cnt = 0u64;
+            let mut to1_cnt = 0u64;
+            let mut best =
+                vec![vec![vec![None; PMAX - PMIN + 1]; VMAX - VMIN + 1]; NMAX - NMIN + 1];
+            let mut best_g = (NMIN..=NMAX)
+                .map(|n| {
+                    (VMIN..=VMAX)
+                        .map(|v| {
+                            (PMIN..=PMAX)
+                                .map(|pi| {
+                                    let mut ls = vec![];
+                                    let mut used = 1;
+                                    let mut max_sz = 0;
+                                    for sz in 1.. {
+                                        let nused = used + sz;
+                                        if nused > v {
+                                            break;
+                                        }
+                                        used = nused;
+                                        ls.push(vec![1; sz]);
+                                        max_sz.chmax(sz);
+                                    }
+                                    let unit = n / max_sz;
+                                    debug_assert!(unit <= n);
+                                    ls.iter_mut().for_each(|ls| {
+                                        ls.iter_mut().for_each(|l| {
+                                            *l = unit as i32;
+                                        })
+                                    });
+                                    {
+                                        let mut que = BinaryHeap::new();
+                                        for (i, ls) in ls.iter().cloned().enumerate() {
+                                            que.push((ls[0], Reverse(i), ls));
+                                        }
+                                        while used < v {
+                                            let Some((_, Reverse(i), ls0)) = que.pop() else {
+                                                break;
+                                            };
+                                            let len0 = ls0.len();
+                                            let sm = ls0.into_iter().sum::<i32>();
+                                            let len1 = len0 + 1;
+                                            let unit = sm / len1 as i32;
+                                            if unit == 0 {
+                                                continue;
+                                            }
+                                            let mut ls1 = vec![unit; len1];
+                                            let rem = sm - unit * len1 as i32;
+                                            for j in 0..rem as usize {
+                                                ls1[j] += 1;
+                                            }
+                                            debug_assert!(ls1.iter().all(|&l| l > 0));
+                                            debug_assert_eq!(sm, ls1.iter().sum::<i32>());
+                                            ls[i] = ls1.clone();
+                                            que.push((ls1[0], Reverse(i), ls1));
+                                            used += 1;
+                                        }
+                                    }
+                                    let mut g = vec![vec![]; v];
+                                    let mut nxt = 0;
+                                    for ls in ls {
+                                        for (i, l) in ls.into_iter().enumerate() {
+                                            let pre = if i == 0 { 0 } else { nxt };
+                                            nxt += 1;
+                                            g[pre].push((nxt, l));
+                                        }
+                                    }
+                                    best[n - NMIN][v - VMIN][pi - PMIN] = Some(
+                                        evaluate(
+                                            n,
+                                            (pi as f64 + 0.5) / PRESOL as f64,
+                                            &g,
+                                            &mut to,
+                                            &mut to_cnt,
+                                            &mut to1,
+                                            &mut to1_cnt,
+                                        )
+                                        .unwrap(),
+                                    );
+                                    g
+                                })
+                                .collect_vec()
+                        })
+                        .collect_vec()
+                })
+                .collect_vec();
+            for li in 1.. {
+                let mut upd = false;
+                for (ni, (best, best_g)) in best.iter_mut().zip(best_g.iter_mut()).enumerate() {
+                    let n = NMIN + ni;
+                    for (vi, (best, best_g)) in best.iter_mut().zip(best_g.iter_mut()).enumerate() {
+                        let v = VMIN + vi;
+                        for (pi, (best, best_g)) in
+                            best.iter_mut().zip(best_g.iter_mut()).enumerate()
+                        {
+                            let mut g = vec![vec![]; v];
+                            let mut uf = UnionFind::new(v);
+                            for i in 1..v {
+                                let mut pi = rand.next_usize() % i;
+                                while uf.group_size(pi) > 3 {
+                                    pi = rand.next_usize() % i;
+                                }
+                                let d = 1 + (rand.next_usize() % (n - 1)) as i32;
+                                g[pi].push((i, d));
+                                if pi != 0 {
+                                    uf.unite(pi, i);
+                                }
+                            }
+                            let p = ((PMIN + pi) as f64 + 0.5) / PRESOL as f64;
+                            let Some(eval) =
+                                evaluate(n, p, &g, &mut to, &mut to_cnt, &mut to1, &mut to1_cnt)
+                            else {
+                                continue;
+                            };
+                            if best.chmax(eval) {
+                                *best_g = g.clone();
+                                upd = true;
+                            }
+                        }
+                    }
+                }
+                if upd {
+                    eprintln!("{li}");
+                }
+                if li % 10000 == 0 {
+                    let path = std::path::PathBuf::from(format!(r"tbl_g\tbl{}.txt", li));
+                    let mut f = std::fs::File::create(&path).unwrap();
+                    let mut el = false;
+                    for (ni, best_g) in best_g.iter().enumerate() {
+                        let n = NMIN + ni;
+                        for (vi, best_g) in best_g.iter().enumerate() {
+                            let v = VMIN + vi;
+                            for (pi, best_g) in best_g.iter().enumerate() {
+                                assert!(!best_g.is_empty());
+                                let p = PMIN + pi;
+                                use std::io::Write;
+                                if el {
+                                    write!(&mut f, "else ").unwrap();
+                                } else {
+                                    el = true;
+                                }
+                                write!(&mut f, "if n=={n}&&v=={v}&&pi=={p}").unwrap();
+                                write!(&mut f, "{{").unwrap();
+                                {
+                                    write!(&mut f, "g=vec![").unwrap();
+                                    for g in best_g.iter() {
+                                        write!(&mut f, "vec![").unwrap();
+                                        for &(i, d) in g.iter() {
+                                            write!(&mut f, "({i},{d}),").unwrap();
+                                        }
+                                        write!(&mut f, "],").unwrap();
+                                    }
+                                    write!(&mut f, "];").unwrap();
+                                }
+                                writeln!(&mut f, "}}").unwrap();
+                            }
+                        }
+                    }
                 }
             }
-            let mut g = vec![vec![]; self.v];
-            let mut nxt = 0;
-            for ls in ls {
-                for (i, d) in ls.iter().copied().enumerate() {
-                    let from = if i == 0 { 0 } else { nxt + i };
-                    g[from].push((nxt + i + 1, d));
-                }
-                nxt += ls.len();
-            }
-             */
+        }
+        fn gen_tree(&self) -> Vec<Vec<(usize, i32)>> {
+            let mut g = vec![];
+            let n = self.n;
+            let m = self.m;
+            let v = self.v;
+            let pi = ((PRESOL * m) / (n * n)).clamp(PMIN, PMAX);
+            assert!(g.len() == self.v);
+            return g;
+        }
+        fn gen_arm_shapes(&self) -> (Vec<ArmShape>, usize) {
             let g = self.gen_tree();
             let arms = g[0]
                 .iter()
