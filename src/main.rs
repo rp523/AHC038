@@ -5868,8 +5868,8 @@ use procon_reader::*;
 //////////////////////////////////////////////////////////////////////////////////////
 
 fn main() {
-    solver::Solver::new().solve();
     //solver::Solver::random_search();
+    solver::Solver::new().solve();
 }
 
 mod solver {
@@ -6192,11 +6192,12 @@ mod solver {
                 to_cnt: &mut u64,
                 to1: &mut [Vec<u64>],
                 to1_cnt: &mut u64,
-            ) -> Option<(f64, i32, i32)> {
+            ) -> Option<(f64, Reverse<f64>, i32, i32)> {
                 let q = 1.0 - p * 0.5;
                 *to_cnt += 1;
                 let mut eval0 = 0.0;
                 let mut eval1 = 0;
+                let mut eval0s = vec![];
                 for ls in ls {
                     *to1_cnt += 1;
                     let mut pw = 0;
@@ -6239,8 +6240,12 @@ mod solver {
                     if !ok {
                         return None;
                     }
-                    eval0 += 1.0 - power(q, pw);
+                    let a = 1.0 - power(q, pw);
+                    eval0 += a;
+                    eval0s.push(a);
                 }
+                let eval0s = eval0s.iter().map(|&x| x * x).sum::<f64>() / eval0s.len() as f64
+                    - (eval0s.iter().sum::<f64>() / eval0s.len() as f64).powi(2);
                 let mut eval2 = None;
                 for (y0, to0) in to.iter().take(n).enumerate() {
                     for (x0, _to0) in to0.iter().take(n).filter(|&&to| to == *to_cnt).enumerate() {
@@ -6262,7 +6267,7 @@ mod solver {
                     }
                 }
                 let eval2 = if let Some(eval2) = eval2 { eval2 } else { 0 };
-                Some((eval0, eval1, eval2))
+                Some((eval0, Reverse(eval0s), eval1, eval2))
             }
             let mut rand = XorShift64::new();
             let mut to = vec![vec![0; NMAX]; NMAX];
@@ -6377,7 +6382,7 @@ mod solver {
                     eprintln!("{li}");
                 }
                 if li % 10000 == 0 {
-                    let path = std::path::PathBuf::from(format!(r"tbl\tbl{}.txt", li));
+                    let path = std::path::PathBuf::from(format!(r"tbl4\tbl{}.txt", li));
                     let mut f = std::fs::File::create(&path).unwrap();
                     let mut el = false;
                     for (ni, best_ls) in best_ls.iter().enumerate() {
